@@ -1,0 +1,36 @@
+# Project configuration. Paths are relative to the repo root.
+# Values marked "draft" are finalized in week 1 from the data profile.
+
+paths:
+  raw: data/raw
+  clean: data/clean
+  stream_in: data/stream_in      # file-stream fallback input
+  live_sample: data/live_sample  # raw messages saved by the live probe
+  checkpoints: data/checkpoints
+  serving: data/serving
+  models: data/models
+
+noaa:
+  base_url: https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2024/
+
+kafka:
+  bootstrap_servers: localhost:9092
+  topic_raw: ais.raw
+  topic_alerts: ais.alerts
+  partitions: 3
+  # Spark connector must match the Spark and Scala build (pyspark 3.5.9, Scala 2.12)
+  spark_package: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.9
+
+stream:
+  source: kafka                  # kafka | files (fallback until Kafka is proven, checkpoint Oct 30)
+
+live:
+  url: wss://stream.aisstream.io/v0/stream
+  api_key_env: AISSTREAM_API_KEY
+
+# Draft: New York Harbor and approaches, to calibrate from the data profile
+harbor_bbox:
+  lat_min: 40.40
+  lat_max: 40.95
+  lon_min: -74.30
+  lon_max: -73.70

@@ -1,0 +1,35 @@
+[project]
+name = "vessel-watch"
+version = "0.1.0"
+description = "NY Harbor vessel traffic analytics: Spark and Kafka pipeline, arrival forecast, AIS anomaly alerts"
+requires-python = "==3.11.*"
+dependencies = [
+    # Spark 3.5 predates numpy 2 and pandas 3; keep both on older majors.
+    # pyarrow 26 needs numpy 2 at runtime, so stay on 25.
+    "pyspark==3.5.9",
+    "numpy==1.26.4",
+    "pandas==2.2.3",
+    "pyarrow==25.0.1",
+    "duckdb==2.0.0",
+    "shapely==2.2.0",
+    "scikit-learn==1.9.1",
+    "confluent-kafka==2.16.0",
+    "websockets==17.3",
+    "requests==2.34.2",
+    "pyyaml==6.0.3",
+    "python-dotenv==1.2.4",
+    "fastapi==0.161.0",
+    "uvicorn==0.54.0",
+    "streamlit==1.66.1",
+    "pydeck==0.9.3",
+]
+
+[dependency-groups]
+dev = ["pytest==9.1.1"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

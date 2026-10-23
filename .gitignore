@@ -151,6 +151,7 @@ activemq-data/
 
 # Environments
 .env
+.env.example
 .envrc
 .venv
 env/
@@ -218,3 +219,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project data and outputs (never commit)
+data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+checkpoints/
+spark-warehouse/
+metastore_db/
+derby.log
