@@ -4,14 +4,32 @@
 paths:
   raw: data/raw
   clean: data/clean
-  stream_in: data/stream_in      # file-stream fallback input
   live_sample: data/live_sample  # raw messages saved by the live probe
   checkpoints: data/checkpoints
   serving: data/serving
+  positions: data/serving/positions  # position reports written by the streaming job
   models: data/models
 
+spark:
+  driver_memory: 4g
+  shuffle_partitions: 8
+
+cleaning:
+  # Ship MMSIs: 9 digits starting with 2-7 (others are base stations, AtoN, handhelds, SAR)
+  mmsi_min: 200000000
+  mmsi_max: 799999999
+  max_implied_knots: 50          # draft: max seen in the 2-day profile is 46.5 kn (fast ferries)
+
+# Draft from the 2-day profile (docs/DATA_PROFILE.md): p99 interval is ~90 s under way, ~540 s at anchor
+# or moored. Fine-tune once more history is loaded.
+signal_gap:
+  underway_seconds: 600
+  stationary_seconds: 1800       # used for stationary statuses and a missing status
+  stationary_statuses: [1, 5]    # 1 at anchor, 5 moored
+
 noaa:
-  base_url: https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2024/
+  # Daily zipped CSVs; 2024 verified (2025 has no daily point files, see docs/SOURCES.md)
+  file_url: https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{year}/AIS_{year}_{month:02d}_{day:02d}.zip
 
 kafka:
   bootstrap_servers: localhost:9092
@@ -22,7 +40,12 @@ kafka:
   spark_package: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.9
 
 stream:
-  source: kafka                  # kafka | files (fallback until Kafka is proven, checkpoint Oct 30)
+  trigger_seconds: 30            # micro-batch interval
+
+dashboard:
+  recent_minutes: 15             # vessels shown on the map: last report within this window
+  refresh_seconds: 30
+  timezone: America/New_York     # display only; stored timestamps stay UTC
 
 live:
   url: wss://stream.aisstream.io/v0/stream

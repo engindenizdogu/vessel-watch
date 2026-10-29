@@ -24,13 +24,17 @@ Available now:
 - `make kafka-up` / `make kafka-down`: start or stop the broker (Docker Compose) and create the topics
 - `make test`: run pytest
 - `make live-probe [DURATION=120]`: listen to the live feed over the harbor box, print sample messages and a summary, save raw JSON lines to `data/live_sample/`
+- `make live`: run the live producer (AISStream over the harbor box to `ais.raw`, keyed by MMSI) until Ctrl+C; needs `make kafka-up` and `AISSTREAM_API_KEY` in `.env`
+- `make stream [RUN=live|replay]`: run the Structured Streaming job (`ais.raw` to `data/serving/positions/`, checkpoint per run); applies the stateless cleaning steps
+- `make app`: start the Streamlit dashboard (live map from serving Parquet via DuckDB)
+- `make download START=YYYY-MM-DD END=YYYY-MM-DD`: download NOAA daily CSVs into `data/raw/` (about 1 GB per day unzipped; existing days skipped)
+- `make clean-data`: clean every `data/raw/AIS_*.csv` with Spark into `data/clean/` (Parquet by date), logging row counts per step
+- `make profile`: profile `data/clean/` with DuckDB (traffic per hour, report intervals by status, implied speeds) and write `docs/DATA_PROFILE.md`
 
 Planned:
-- `make clean-data`: run the Spark batch cleaning job
 - `make replay`: publish historical data to `ais.raw` at accelerated speed
-- `make stream`: run the Structured Streaming job
 - `make train`: build features and train the forecast model offline
-- `make api` / `make app`: start FastAPI and the Streamlit dashboard
+- `make api`: start FastAPI
 
 ## Architecture Rules
 1. **One code path.** Cleaning and feature logic live in `pipeline/clean.py` and `pipeline/features.py` and are imported by the batch job, the streaming job, and training. Never duplicate them (avoids training-serving skew).
@@ -42,9 +46,8 @@ Planned:
 7. **Avoid leakage.** Features at time t use only data available before t.
 8. **Handle nulls explicitly.** In Spark, `when(null < x)` is not true and silently falls through to `otherwise`; check windows with too few rows before alerting.
 9. **Pre-filter geospatially.** Apply the harbor bounding box before geofence checks and avoid row-wise Python UDFs on large data. Use a rounded lat/lon grid from native Spark expressions and map geofences to grid cells once, offline.
-10. **Keep a folder-based file-stream fallback** behind a config flag until Kafka is proven (checkpoint Oct 30).
-11. **Per-vessel streaming state uses `applyInPandasWithState`.** Streaming has no `lag` or row-based windows; gaps fire from an event-time timeout with a watermark. Run one source (replay or live) at a time, each with its own checkpoint.
-12. **The streaming job writes Parquet, never DuckDB.** DuckDB allows one writer process; the API reads the Parquet through DuckDB read-only.
+10. **Per-vessel streaming state uses `applyInPandasWithState`.** Streaming has no `lag` or row-based windows; gaps fire from an event-time timeout with a watermark. Run one source (replay or live) at a time, each with its own checkpoint.
+11. **The streaming job writes Parquet, never DuckDB.** DuckDB allows one writer process; the API reads the Parquet through DuckDB read-only.
 
 ## Data and Security
 - Never commit raw data, Parquet outputs, Spark checkpoints, or `data/`.
@@ -53,7 +56,7 @@ Planned:
 - Confirm the live feed's New York Harbor coverage and terms before relying on it.
 
 ## Working Style
-- Follow the weekly plan in `docs/PROJECT_PLAN.md`. Checkpoints: Oct 25 (data usable, with numbers), Oct 30 (Kafka reads into Spark, else fall back), Nov 15 (feature freeze).
+- Follow the weekly plan in `docs/PROJECT_PLAN.md`. Checkpoints: Oct 25 (data usable, with numbers), Oct 30 (Kafka reads into Spark; passed Oct 28), Nov 15 (feature freeze).
 - If scope has to be cut, cut in this order: off-route alerts, then the live feed (demo from replay), then forecast tuning.
 - Build vertical slices that run end to end, then improve. Prefer simple, explainable rules (signal gap) before learned models.
 - Report forecast results honestly, including when the model does not beat the seasonal-naive baseline.

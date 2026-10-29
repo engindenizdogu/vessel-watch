@@ -1,11 +1,11 @@
 # Targets are added as their scripts land; see the Commands section in CLAUDE.md.
 KAFKA_TOPICS = docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092
 
-.PHONY: env kafka-up kafka-down test live-probe
+.PHONY: env kafka-up kafka-down test live-probe live stream app clean-data profile download
 
 env:
 	uv sync
-	mkdir -p data/raw data/clean data/stream_in data/checkpoints data/serving data/models
+	mkdir -p data/raw data/clean data/checkpoints data/serving data/models
 
 kafka-up:
 	docker compose up -d
@@ -21,3 +21,22 @@ test:
 
 live-probe:
 	uv run python -m ingest.live_probe --seconds $(or $(DURATION),120)
+
+live:
+	uv run python -m ingest.live_client
+
+stream:
+	uv run python -m pipeline.stream_job --run $(or $(RUN),live)
+
+# python -m keeps the repo root on sys.path so the app can import pipeline/
+app:
+	uv run python -m streamlit run app/dashboard.py
+
+clean-data:
+	uv run python -m pipeline.batch_job
+
+profile:
+	uv run python -m pipeline.data_profile
+
+download:
+	uv run python -m ingest.noaa_download --start $(START) --end $(END)
