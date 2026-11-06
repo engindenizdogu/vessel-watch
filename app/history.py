@@ -4,8 +4,10 @@ from datetime import date, datetime, time, timedelta
 
 import streamlit as st
 
-from app.charts import for_display, hourly_chart, vessel_map
-from app.queries import available_days, latest_positions, local_to_utc, parquet_glob, vessels_per_hour
+from app.charts import for_display, gate_overlay, hourly_chart, vessel_map
+from app.queries import (
+    available_days, gate_rates, latest_positions, load_shutdown_spots, local_to_utc, parquet_glob, vessels_per_hour,
+)
 from pipeline.config import load_config
 
 cfg = load_config()
@@ -13,6 +15,8 @@ dash = cfg["dashboard"]
 TZ = dash["timezone"]
 GLOB = parquet_glob(cfg["paths"]["clean"])
 STEP = timedelta(minutes=dash["history_step_minutes"])
+SPOTS = load_shutdown_spots(cfg["paths"]["shutdown_spots"])
+GATES = gate_overlay(cfg["gates"]["lines"], gate_rates(cfg["paths"]["crossings_hourly"], cfg["gates"]["target"]["groups"]))
 
 st.title("New York Harbor: History")
 st.markdown(
@@ -52,10 +56,10 @@ def day_view(day: date) -> None:
             f"No reports in the {minutes} minutes before {t:%H:%M}. NOAA files are UTC days, so late evening "
             "in New York needs the next day's file, which may not be in the sample."
         )
-        vessel_map(df, cfg["harbor_bbox"])
+        vessel_map(df, cfg["harbor_bbox"], SPOTS, GATES)
     else:
         shown = for_display(df, TZ)
-        vessel_map(shown, cfg["harbor_bbox"])
+        vessel_map(shown, cfg["harbor_bbox"], SPOTS, GATES)
 
     hourly = vessels_per_hour(GLOB, local_to_utc(day, time(0), TZ), local_to_utc(day + timedelta(days=1), time(0), TZ))
     local = hourly["hour"].dt.tz_localize("UTC").dt.tz_convert(TZ)

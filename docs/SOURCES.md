@@ -29,6 +29,8 @@ CSV columns (from `AIS_2024_07_01.zip`):
 MMSI,BaseDateTime,LAT,LON,SOG,COG,Heading,VesselName,IMO,CallSign,VesselType,Status,Length,Width,Draft,Cargo,TransceiverClass
 ```
 
+Vessel type codes: "AIS Vessel Type and Group Codes used by the Marine Cadastre Project" (2018-05-23, sources U.S. Coast Guard, NOAA, BOEM): https://coast.noaa.gov/data/marinecadastre/ais/VesselTypeCodes2018.pdf (read 2026-11-06). Codes 0-99 are the AIS "ship and cargo type" each vessel broadcasts in its static data (the ITU-R M.1371 table): 30 fishing, 31-32 towing, 33 dredging, 35 military, 36 sailing, 37 pleasure craft, 50-59 service vessels (50 pilot, 52 tug, 55 law enforcement), 60-69 passenger, 70-79 cargo, 80-89 tanker, 90-99 other; the second digit marks the hazardous cargo category (e.g. 71 = cargo, category A). NOAA's own groups also put 21 and 22 under "Tug Tow", and older files used codes 1001-1025; in our 58 days only one vessel has 22 and one has 107. 84 vessels have no type and 46 have 0 (not available).
+
 ## Live AIS: AISStream.io
 
 Checked 2026-10-22. The website blocks scripted access, so the terms, coverage, and rate limits below are **not yet verified**; read them in a browser.

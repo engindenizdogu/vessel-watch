@@ -2,7 +2,7 @@
 KAFKA_TOPICS = docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092
 APP_PORT = 8501
 
-.PHONY: env kafka-up kafka-down test live-probe live stream app tunnel clean-data profile download history gaps
+.PHONY: env kafka-up kafka-down test live-probe live stream app tunnel clean-data profile download history gaps gates compact
 
 env:
 	uv sync
@@ -29,6 +29,10 @@ live:
 stream:
 	uv run python -m pipeline.stream_job --run $(or $(RUN),live)
 
+# Live history: merge finished days into data/live/history and trim old serving data (safe while streaming).
+compact:
+	uv run python -m pipeline.compact_job
+
 # python -m keeps the repo root on sys.path so the app can import pipeline/.
 # The port is pinned so Streamlit fails instead of moving to another port the tunnel doesn't point at.
 app:
@@ -52,3 +56,6 @@ history:
 
 gaps:
 	uv run python -m pipeline.gap_job
+
+gates:
+	uv run python -m pipeline.gate_job

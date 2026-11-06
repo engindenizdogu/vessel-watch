@@ -1,6 +1,6 @@
 # Data Dictionary
 
-Both sources are cleaned into one shared schema (Table 1), which is what the dashboard shows. Tables 2 and 3 list the raw fields it is built from, and Table 4 describes the signal gaps found in the historical data.
+Both sources are cleaned into one shared schema (Table 1), which is what the dashboard shows. Tables 2 and 3 list the raw fields it is built from, Table 4 describes the signal gaps found in the historical data, Table 5 the shutdown spots learned from them, and Tables 6 and 7 the vessels crossing the harbor's entrance gates.
 
 ## Sources
 
@@ -9,7 +9,7 @@ Both sources are cleaned into one shared schema (Table 1), which is what the das
 
 ## Table 1. Cleaned position reports (shown on the dashboard)
 
-One row per position report inside the harbor box (latitude 40.40 to 40.95, longitude -74.30 to -73.70). Historical days are stored by date in `data/clean/` and live reports in `data/serving/positions/`. Historical data also has duplicate reports and isolated position spikes (implied speed over 50 knots to both neighbouring reports) removed; the live stream skips those two steps because they need each vessel's earlier reports.
+One row per position report inside the harbor box (latitude 40.40 to 40.95, longitude -74.30 to -73.70). Historical days are stored by date in `data/clean/`. Live reports go to `data/serving/positions/` for the dashboard (last 2 days) and to `data/live/history/` (one file per day, compacted every hour by the stream job). Historical data also has duplicate reports and isolated position spikes (implied speed over 50 knots to both neighbouring reports) removed; the live stream skips those two steps because they need each vessel's earlier reports, and the hourly compaction applies them to live history.
 
 | Column        | Type      | Description                                                                                                                                                                  | From NOAA (Table 2) | From AISStream (Table 3)  |
 | :------------ | :-------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------ | :------------------------ |
@@ -27,7 +27,7 @@ One row per position report inside the harbor box (latitude 40.40 to 40.95, long
 
 ## Table 2. Historical AIS data (NOAA MarineCadastre, 2023 and 2024 daily files)
 
-One CSV per day covering all US waters, one row per vessel position report. The archive keeps about one report per vessel per minute. Example: 2024-07-01 has 8,999,649 rows from 22,651 vessels. The 2023 files have the same columns.
+One CSV per day covering all US waters, one row per vessel position report. The archive keeps about one report per vessel per minute. Example: 2024-07-01 has 8,999,649 rows from 22,651 vessels. The 2023 files have the same columns. The archive has feed outages, minutes when almost no reports were recorded: 1,134 of the 83,520 minutes in the 58 sampled days, the longest 8 hours (2023-03-08), and a short one most days just after 06:00 UTC.
 
 | Column             | Type      | Description                                                                                                                                           |
 | :----------------- | :-------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -41,7 +41,7 @@ One CSV per day covering all US waters, one row per vessel position report. The 
 | `VesselName`       | text      | Name broadcast by the vessel.                                                                                                                         |
 | `IMO`              | text      | International Maritime Organization number, a permanent hull ID (e.g. `IMO9190705`). Often missing or `IMO0000000` for small craft.                   |
 | `CallSign`         | text      | Radio call sign.                                                                                                                                      |
-| `VesselType`       | integer   | AIS ship type code, e.g. 30 fishing, 31-32 towing, 37 pleasure craft, 52 tug, 60-69 passenger, 70-79 cargo, 80-89 tanker.                             |
+| `VesselType`       | integer   | AIS ship type code, e.g. 30 fishing, 31-32 towing, 37 pleasure craft, 52 tug, 60-69 passenger, 70-79 cargo, 80-89 tanker ([full code table](https://coast.noaa.gov/data/marinecadastre/ais/VesselTypeCodes2018.pdf)). Broadcast by the vessel itself, so it can be missing or wrong. |
 | `Status`           | integer   | Navigational status code, e.g. 0 under way using engine, 1 at anchor, 5 moored, 15 not defined. Empty for Class B transmitters, which do not send it. |
 | `Length`           | integer   | Vessel length, in metres.                                                                                                                             |
 | `Width`            | integer   | Vessel width (beam), in metres.                                                                                                                       |
@@ -78,7 +78,7 @@ Other fields in the messages (`RepeatIndicator`, `Raim`, `CommunicationState`, `
 
 ## Table 4. Signal gaps (`make gaps`, stored in `data/gaps/`)
 
-One row per gap: a Class A vessel that was reporting regularly went silent longer than its threshold (see the signal-gap definition in the project plan). Built from the cleaned historical data (Table 1).
+One row per gap: a Class A vessel that was reporting regularly went silent longer than its threshold (see the signal-gap definition in the project plan). Built from the cleaned historical data (Table 1). No gap is raised if a feed outage (a minute with under 25% of the day's median reports) starts before the threshold passes.
 
 | Column        | Type      | Description                                                                                                       |
 | :------------ | :-------- | :---------------------------------------------------------------------------------------------------------------- |
@@ -88,6 +88,43 @@ One row per gap: a Class A vessel that was reporting regularly went silent longe
 | `lat`, `lon`, `sog` | decimal | Position and speed in that last report.                                                                    |
 | `threshold_s` | decimal   | Silence allowed, in seconds: the larger of the state minimum and 8 times the vessel's median recent interval.      |
 | `alert_ts`    | timestamp | `last_ts` plus the threshold: when the gap is raised.                                                             |
-| `resumed_ts`  | timestamp | Time of the next report; empty if the vessel was not seen again before the data ends.                             |
-| `gap_s`       | decimal   | Length of the silence in seconds; empty when `resumed_ts` is empty.                                               |
+| `resumed_ts`  | timestamp | Time of the next report; empty if the vessel was not seen again before the data ends (the end of a block of consecutive days). |
+| `gap_s`       | decimal   | Length of the silence in seconds; empty when `resumed_ts` is empty. Can include a few feed outage minutes.        |
+| `moved_km`    | decimal   | Distance from the last position to the position at `resumed_ts`, in km; empty when `resumed_ts` is empty.         |
+| `known_spot`  | boolean   | True if the gap started in a shutdown spot (Table 5), where going silent is routine.                              |
 | `date`        | date      | UTC date of `last_ts`; the Parquet files are partitioned by it.                                                   |
+
+## Table 5. Shutdown spots (`make gaps`, stored in `data/models/shutdown_spots.parquet`)
+
+One row per grid cell (0.002° on a side, about 220 m north-south by 170 m east-west) where at least 2 vessels had a signal gap of an hour or more that ended within 200 m of where it started: berths and docks where vessels routinely switch AIS off. Learned from the gaps in Table 4 and drawn as gray rings on the dashboard maps.
+
+| Column             | Type    | Description                                                        |
+| :----------------- | :------ | :----------------------------------------------------------------- |
+| `lat`, `lon`       | decimal | Center of the grid cell.                                           |
+| `vessels`          | integer | Distinct vessels that went silent there.                           |
+| `silences`         | integer | Number of such gaps.                                               |
+| `median_silence_h` | decimal | Median length of those gaps, in hours.                             |
+
+## Table 6. Gate crossings (`make gates`, stored in `data/crossings/`)
+
+One row per crossing: two consecutive reports of a vessel, at most 30 minutes apart, whose straight track crosses a gate, a line across a harbor entrance drawn on the dashboard maps (`gates` in `config.yaml`). Built from the cleaned historical data (Table 1).
+
+| Column                                      | Type      | Description                                                                 |
+| :------------------------------------------ | :-------- | :-------------------------------------------------------------------------- |
+| `mmsi`, `name`, `vessel_type`, `lat`, `lon` |           | The vessel and its position just after crossing, as in Table 1.             |
+| `gate`                                      | text      | `sea_entrance`, `narrows`, `east_river`, or `hudson`.                       |
+| `direction`                                 | text      | `in` (toward the harbor) or `out`.                                          |
+| `ts`                                        | timestamp | Time of the report just after the crossing (UTC).                           |
+| `date`                                      | date      | UTC date of `ts`; the Parquet files are partitioned by it.                  |
+
+## Table 7. Crossings per hour (`make gates`, stored in `data/crossings_hourly.parquet`)
+
+The forecast target table: one row per UTC hour, gate, direction, and vessel group for every day in the history, including hours with no crossings. The forecast target is `sea_entrance`, `in`, groups `cargo` and `tanker`.
+
+| Column      | Type      | Description                                                                                                       |
+| :---------- | :-------- | :---------------------------------------------------------------------------------------------------------------- |
+| `hour`      | timestamp | Start of the hour (UTC).                                                                                          |
+| `gate`      | text      | Gate name (Table 6).                                                                                              |
+| `direction` | text      | `in` or `out`.                                                                                                    |
+| `group`     | text      | Vessel group from the AIS type (`vessel_groups` in `config.yaml`): `cargo`, `tanker`, `passenger`, `tug_tow`, `pleasure_sail`, or `other` (any other code, or none). |
+| `crossings` | integer   | Crossings in that hour.                                                                                           |

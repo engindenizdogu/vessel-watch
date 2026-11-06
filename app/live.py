@@ -4,13 +4,16 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from app.charts import for_display, vessel_map
-from app.queries import latest_positions, parquet_glob
+from app.charts import for_display, gate_overlay, vessel_map
+from app.queries import gate_rates, latest_positions, load_shutdown_spots, parquet_glob
 from pipeline.config import load_config
 
 cfg = load_config()
 dash = cfg["dashboard"]
 GLOB = parquet_glob(cfg["paths"]["positions"])
+SPOTS = load_shutdown_spots(cfg["paths"]["shutdown_spots"])
+RATES = gate_rates(cfg["paths"]["crossings_hourly"], cfg["gates"]["target"]["groups"])
+GATES = gate_overlay(cfg["gates"]["lines"], RATES)
 
 st.title("New York Harbor: Live Vessel Traffic")
 st.markdown(
@@ -23,6 +26,15 @@ st.markdown(
     "[NOAA's AIS archive](https://hub.marinecadastre.gov/pages/vesseltraffic), cleaned with the same Spark "
     "code, and the **Data Dictionary** page explains every column."
 )
+t = cfg["gates"]["target"]
+target = RATES[(RATES["gate"] == t["gate"]) & (RATES["direction"] == t["direction"])]["ships"] if not RATES.empty else []
+per_day = f" (about {target.iloc[0]:.0f} a day in the NOAA history)" if len(target) else ""
+st.markdown(
+    "The orange lines on the map are **gates** across the harbor's entrances: the sea entrance between Sandy "
+    "Hook and Rockaway Point, the Narrows under the Verrazzano Bridge, the East River at Throgs Neck, and the "
+    "Hudson at the George Washington Bridge. Each time a vessel's track crosses one, it is counted in or out. "
+    f"The forecast will predict how many cargo ships and tankers enter from the sea each hour{per_day}."
+)
 st.caption("AISStream → Kafka → Spark Structured Streaming → Parquet (DuckDB for querying) → Streamlit")
 
 
@@ -32,7 +44,7 @@ def live_map() -> None:
     df = latest_positions(GLOB, minutes, datetime.now(timezone.utc).replace(tzinfo=None))
     if df.empty:
         st.info(f"No position reports in the last {minutes} minutes. Is `make live` and `make stream` running?")
-        vessel_map(df, cfg["harbor_bbox"])
+        vessel_map(df, cfg["harbor_bbox"], SPOTS, GATES)
         return
 
     c1, c2 = st.columns(2)
@@ -41,7 +53,7 @@ def live_map() -> None:
     c2.metric("Latest report", latest.strftime("%H:%M:%S %Z"))
 
     shown = for_display(df, dash["timezone"])
-    vessel_map(shown, cfg["harbor_bbox"])
+    vessel_map(shown, cfg["harbor_bbox"], SPOTS, GATES)
     st.dataframe(shown.sort_values("ts", ascending=False), hide_index=True, width="stretch")
 
 

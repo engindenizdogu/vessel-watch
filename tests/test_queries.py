@@ -2,7 +2,9 @@ from datetime import date, datetime, time
 
 import pandas as pd
 
-from app.queries import available_days, latest_positions, local_to_utc, parquet_glob, vessels_per_hour
+from app.queries import (
+    available_days, gate_rates, latest_positions, load_shutdown_spots, local_to_utc, parquet_glob, vessels_per_hour,
+)
 
 TZ = "America/New_York"
 
@@ -67,3 +69,20 @@ def test_latest_positions_fills_columns_missing_from_older_files(tmp_path):
     pd.read_parquet(old).drop(columns="name").to_parquet(old, index=False)
     df = latest_positions(parquet_glob(tmp_path), 15, datetime(2024, 7, 1, 12))
     assert list(df.columns)[:3] == ["mmsi", "name", "ts"] and df["name"].isna().all()
+
+
+def test_load_shutdown_spots_reads_the_file_or_returns_empty(tmp_path):
+    path = tmp_path / "shutdown_spots.parquet"
+    assert load_shutdown_spots(path).empty
+    pd.DataFrame({"lat": [40.7], "lon": [-74.01], "vessels": [2], "silences": [3], "median_silence_h": [9.0]}).to_parquet(path)
+    assert load_shutdown_spots(path)[["vessels", "silences"]].values.tolist() == [[2, 3]]
+
+
+def test_gate_rates_average_per_day(tmp_path):
+    path = tmp_path / "hourly.parquet"
+    assert gate_rates(path, ["cargo"]).empty
+    hours = pd.to_datetime(["2024-07-01 03:00", "2024-07-02 05:00"])
+    pd.DataFrame({"hour": hours.repeat(2), "gate": "g", "direction": "in", "group": ["cargo", "other"] * 2,
+                  "crossings": [2, 1, 4, 3]}).to_parquet(path)
+    r = gate_rates(path, ["cargo"]).iloc[0]
+    assert (r.ships, r["all"]) == (3.0, 5.0)  # (2 + 4) / 2 days, (2 + 1 + 4 + 3) / 2 days

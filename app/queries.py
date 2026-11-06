@@ -50,6 +50,31 @@ def latest_positions(glob: str, minutes: int, as_of: datetime) -> pd.DataFrame:
     return df.reindex(columns=POSITION_COLUMNS)  # files written before a column was added lack it
 
 
+def load_shutdown_spots(path: Path) -> pd.DataFrame:
+    """Shutdown spots written by the gap job (lat, lon, vessels, silences, median_silence_h); empty if none yet."""
+    try:
+        return _query(f"select * from read_parquet('{path}')", [])
+    except duckdb.IOException:
+        return pd.DataFrame()
+
+
+def gate_rates(path: Path, groups: list[str]) -> pd.DataFrame:
+    """Average crossings per day by gate and direction: `ships` (vessel `groups`) and `all`; empty if none yet."""
+    listed = ", ".join(f"'{g}'" for g in groups)
+    try:
+        return _query(
+            f"""
+            select gate, direction,
+                sum(crossings) filter (where "group" in ({listed})) / count(distinct cast(hour as date)) as ships,
+                sum(crossings) / count(distinct cast(hour as date)) as "all"
+            from read_parquet('{path}') group by 1, 2
+            """,
+            [],
+        )
+    except duckdb.IOException:
+        return pd.DataFrame()
+
+
 def vessels_per_hour(glob: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Distinct vessels reporting in each hour from `start` to `end` (naive UTC, end exclusive)."""
     return _query(

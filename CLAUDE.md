@@ -25,13 +25,15 @@ Available now:
 - `make test`: run pytest
 - `make live-probe [DURATION=120]`: listen to the live feed over the harbor box, print sample messages and a summary, save raw JSON lines to `data/live_sample/`
 - `make live`: run the live producer (AISStream over the harbor box to `ais.raw`, keyed by MMSI) until Ctrl+C; needs `make kafka-up` and `AISSTREAM_API_KEY` in `.env`
-- `make stream [RUN=live|replay]`: run the Structured Streaming job (`ais.raw` to `data/serving/positions/`, checkpoint per run); applies the stateless cleaning steps
+- `make stream [RUN=live|replay]`: run the Structured Streaming job (`ais.raw` to `data/serving/positions/`, checkpoint per run); applies the stateless cleaning steps. With `RUN=live` a second query (own checkpoint) also writes live history to `data/live/incoming/`, and every hour (`stream.compact_minutes`) it compacts that into `data/live/history/` (one file per day, today included; duplicate and spike steps applied) and deletes serving days older than `stream.serving_days`
+- `make compact` (optional): run that compaction once, only when `make stream` is not running
 - `make app`: start the Streamlit dashboard on port 8501: a Live page (latest positions from serving Parquet) a History page (map at a chosen time on a cleaned NOAA day, vessels per hour), both read through DuckDB, and a Data Dictionary page that renders `docs/DATA_DICTIONARY.md`
 - `make tunnel`: public demo link; a Cloudflare Quick Tunnel to the local dashboard (needs `cloudflared`; random URL per start, works only while the laptop runs the pipeline)
 - `make history`: the main way to get NOAA history. Samples random blocks of consecutive days (config `history`), then downloads, cleans into `data/clean/` (Parquet by date, row counts per step), and deletes each raw day in turn; skips days already cleaned
 - `make download START=YYYY-MM-DD END=YYYY-MM-DD` (optional): download specific NOAA days into `data/raw/` and keep the CSVs (about 1 GB per day unzipped; existing days skipped)
 - `make clean-data` (optional): clean every `data/raw/AIS_*.csv` with Spark into `data/clean/`, e.g. to re-clean kept CSVs after a rule change
-- `make gaps`: find signal gaps in `data/clean/` with Spark (rule in `models/gaps.py`) and write them to `data/gaps/` (Parquet by date), printing counts by state
+- `make gaps`: find signal gaps in `data/clean/` with Spark (rule in `models/gaps.py`), learn shutdown spots from them (`data/models/shutdown_spots.parquet`, drawn on the dashboard maps), and write the labeled gaps to `data/gaps/` (Parquet by date), printing counts by state
+- `make gates`: find gate crossings in `data/clean/` with Spark (rule in `pipeline/gates.py`), write them to `data/crossings/` (Parquet by date) and crossings per hour, gate, direction, and vessel group, zeros included, to `data/crossings_hourly.parquet` (the forecast target table)
 - `make profile`: profile `data/clean/` with DuckDB (traffic per hour, report intervals by status, implied speeds) and write `docs/DATA_PROFILE.md`
 
 Planned:
@@ -48,7 +50,7 @@ Planned:
 6. **Injected anomalies are evaluation-only.** Keep them on a separate path (`models/inject.py`); never let them reach training data or the serving store.
 7. **Avoid leakage.** Features at time t use only data available before t.
 8. **Handle nulls explicitly.** In Spark, `when(null < x)` is not true and silently falls through to `otherwise`; check windows with too few rows before alerting.
-9. **Pre-filter geospatially.** Apply the harbor bounding box before geofence checks and avoid row-wise Python UDFs on large data. Use a rounded lat/lon grid from native Spark expressions and map geofences to grid cells once, offline.
+9. **Pre-filter geospatially.** Apply the harbor bounding box before gate and grid checks and avoid row-wise Python UDFs on large data. Use a rounded lat/lon grid from native Spark expressions and map geofences to grid cells once, offline.
 10. **Per-vessel streaming state uses `applyInPandasWithState`.** Streaming has no `lag` or row-based windows; gaps fire from an event-time timeout with a watermark. Run one source (replay or live) at a time, each with its own checkpoint.
 11. **The streaming job writes Parquet, never DuckDB.** DuckDB allows one writer process; the API reads the Parquet through DuckDB read-only.
 
@@ -70,11 +72,11 @@ Planned:
 
 ## Code Conventions
 - Type hints and short docstrings on public functions; no dead code or speculative abstractions.
-- Config (paths, thresholds, topic names, geofence definitions) lives in `config.yaml`, loaded with `pipeline.config.load_config()`; no scattered constants.
-- Thresholds from the plan (arrival window N, signal-gap seconds per status, density percentile) are parameters, finalized in week 1 from the data profile.
+- Config (paths, thresholds, topic names, gate definitions) lives in `config.yaml`, loaded with `pipeline.config.load_config()`; no scattered constants.
+- Thresholds from the plan (signal-gap seconds per status, density percentile) are parameters, finalized from the data profile.
 - Log row counts at each cleaning step so data loss is visible.
 
 ## Definitions (draft, finalized in week 1)
-- **Arrival:** a vessel's first report inside a geofence after at least N minutes outside it, counted once per vessel per visit. Forecast target: arrivals per hour per geofence.
-- **Signal gap:** a Class A vessel that was reporting regularly goes silent longer than max(minimum for its state, 8 x its median recent interval); state is moving (>= 1 knot, 10 min minimum) or stopped (30 min, includes anchored and moored). Skip vessels last seen near the box edge; never alert past the end of the data. Rule in `models/gaps.py`, parameters in `config.yaml` (`signal_gap`).
+- **Gate crossing (arrival):** a vessel's consecutive reports, at most 30 min apart, whose track crosses a gate line at a harbor entrance; "in" if it ends on the harbor side. Rule in `pipeline/gates.py`, gates and vessel groups in `config.yaml` (`gates`, `vessel_groups`). Forecast target: inbound cargo ships and tankers per hour at the sea entrance (`gates.target`).
+- **Signal gap:** a Class A vessel that was reporting regularly goes silent longer than max(minimum for its state, 8 x its median recent interval); state is moving (>= 1 knot, 10 min minimum) or stopped (30 min, includes anchored and moored). Skip vessels last seen near the box edge; never alert past the end of the data or across a feed outage (a minute with under 25% of the day's median reports). Gaps starting at a learned shutdown spot (a berth where vessels routinely switch AIS off) are labeled `known_spot`. Rule in `models/gaps.py`, parameters in `config.yaml` (`signal_gap`).
 - **Off-route:** a report in a grid cell with historical traffic density below a threshold, or far from a learned lane.

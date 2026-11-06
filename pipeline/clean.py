@@ -2,7 +2,8 @@
 (ts, mmsi, name, lat, lon, sog, cog, heading, vessel_type, status).
 
 Each step is a DataFrame -> DataFrame function. The batch job runs all steps and logs row counts;
-the streaming job runs only the stateless ones, since the stateful ones need ordered per-vessel history.
+the streaming job runs only the stateless ones, since the stateful ones need ordered per-vessel history;
+the live compaction job runs the stateful ones on each finished day.
 """
 
 from typing import Any, Callable
@@ -90,9 +91,14 @@ def stateless_steps(cfg: dict[str, Any]) -> list[Step]:
     ]
 
 
-def batch_steps(cfg: dict[str, Any]) -> list[Step]:
-    """All cleaning steps, in order, for historical data."""
-    return stateless_steps(cfg) + [
+def stateful_steps(cfg: dict[str, Any]) -> list[Step]:
+    """Steps that need each vessel's other reports; the live compaction job runs them on finished days."""
+    return [
         ("drop duplicates", drop_duplicates),
         ("drop position spikes", lambda df: drop_position_spikes(df, cfg["cleaning"]["max_implied_knots"])),
     ]
+
+
+def batch_steps(cfg: dict[str, Any]) -> list[Step]:
+    """All cleaning steps, in order, for historical data."""
+    return stateless_steps(cfg) + stateful_steps(cfg)

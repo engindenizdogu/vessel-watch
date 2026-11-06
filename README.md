@@ -26,7 +26,8 @@ make test
 ```
 make history    # sample NOAA days, download, clean into data/clean/ (Parquet by date), delete the raw files
 make profile    # summarize data/clean/ into docs/DATA_PROFILE.md
-make gaps       # find signal gaps in data/clean/ and write them to data/gaps/
+make gaps       # find signal gaps in data/clean/, learn shutdown spots, write both (data/gaps/, data/models/)
+make gates      # vessels crossing the harbor entrances, in and out, and crossings per hour (the forecast target)
 ```
 
 `make history` draws random blocks of consecutive days; the `history` section of `config.yaml` sets the date ranges, the number of blocks, the days per block, and the seed. It downloads, cleans, and deletes one raw day at a time (NOAA daily CSVs are about 1 GB unzipped), so only about 1.4 GB of raw data is on disk at once. It prints the row count after each cleaning step. Days already in `data/clean/` are skipped, so it can be stopped with Ctrl+C and rerun. The default sample (4 blocks of 14 days) takes about 35-45 minutes.
@@ -45,11 +46,13 @@ Start the broker once, then run the other three in their own terminals and leave
 ```
 make kafka-up      # start the Kafka broker (Docker) and create the topics; returns when ready
 make live          # live producer: AISStream over the harbor box to the ais.raw topic
-make stream        # Spark Structured Streaming: ais.raw to data/serving/positions/
+make stream        # Spark Structured Streaming: ais.raw to data/serving/positions/, and live history to data/live/
 make app           # Streamlit dashboard at http://localhost:8501
 ```
 
 The Live page shows each vessel's latest position from the last 15 minutes and refreshes every 30 seconds. The Data Dictionary page shows [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md). The History page shows the harbor at a chosen time on any day in `data/clean/`, with a Play button and a vessels-per-hour chart; it needs only `make app`, not Kafka. Times are New York time. NOAA files are UTC days, so the last 4-5 hours of a day are empty unless the next day is also downloaded. The first `make stream` downloads the Spark Kafka connector, so it takes a minute to start. Stop each one with Ctrl+C, and the broker with `make kafka-down`.
+
+Live history: `make stream` also stores every live report and, every hour, merges them into one file per day in `data/live/history/`, cleaned like the NOAA history; it also deletes serving data older than 2 days. `make compact` does the same once, for when the stream is not running.
 
 `make live-probe [DURATION=120]` listens to the live feed without Kafka and saves the raw messages to `data/live_sample/`, which is useful for checking the feed and the API key.
 
