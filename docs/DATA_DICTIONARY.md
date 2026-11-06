@@ -1,8 +1,32 @@
 # Data Dictionary
 
-## Table 1. Historical AIS data (NOAA MarineCadastre, 2024 daily files)
+Both sources are cleaned into one shared schema (Table 1), which is what the dashboard shows. Tables 2 and 3 list the raw fields it is built from.
 
-One CSV per day covering all US waters, one row per vessel position report. The archive keeps about one report per vessel per minute. Example: 2024-07-01 has 8,999,649 rows from 22,651 vessels.
+## Sources
+
+- **Historical:** NOAA and BOEM MarineCadastre AIS vessel traffic data ([overview](https://hub.marinecadastre.gov/pages/vesseltraffic), [documentation](https://github.com/ocm-marinecadastre/ais-vessel-traffic)). Daily files used here: [2023](https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2023/) and [2024](https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2024/) (2024 only from July 1; earlier 2024 days are listed but do not download).
+- **Live:** [AISStream.io](https://aisstream.io/), a free WebSocket feed of AIS messages ([documentation](https://aisstream.io/documentation)).
+
+## Table 1. Cleaned position reports (shown on the dashboard)
+
+One row per position report inside the harbor box (latitude 40.40 to 40.95, longitude -74.30 to -73.70). Historical days are stored by date in `data/clean/` and live reports in `data/serving/positions/`. Historical data also has duplicate reports and isolated position spikes (implied speed over 50 knots to both neighbouring reports) removed; the live stream skips those two steps because they need each vessel's earlier reports.
+
+| Column        | Type      | Description                                                                                                                                                                  | From NOAA (Table 2) | From AISStream (Table 3)  |
+| :------------ | :-------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------ | :------------------------ |
+| `ts`          | timestamp | Time of the report, stored in UTC. The dashboard shows it in New York time.                                                                                                  | `BaseDateTime`      | `MetaData.time_utc`       |
+| `mmsi`        | integer   | Vessel's 9-digit radio ID. Only ship MMSIs are kept (first digit 2-7); base stations, aids to navigation, and search-and-rescue units are dropped.                           | `MMSI`              | `MetaData.MMSI`           |
+| `lat`         | decimal   | Latitude in decimal degrees.                                                                                                                                                 | `LAT`               | `Latitude`                |
+| `lon`         | decimal   | Longitude in decimal degrees (negative = west).                                                                                                                              | `LON`               | `Longitude`               |
+| `sog`         | decimal   | Speed over ground, in knots. Empty when the vessel sent "not available" (102.3).                                                                                             | `SOG`               | `Sog`                     |
+| `cog`         | decimal   | Course over ground (direction of travel), in degrees from true north. Empty when not available (360).                                                                         | `COG`               | `Cog`                     |
+| `heading`     | integer   | Direction the bow points, in degrees from true north. Empty when not available (511).                                                                                        | `Heading`           | `TrueHeading`             |
+| `vessel_type` | integer   | AIS ship type code (see Table 2). Live: taken from the vessel's latest static data message, so it is empty until one has been received since the live feed started.          | `VesselType`        | `Type` or `ReportB.ShipType` |
+| `status`      | integer   | Navigational status code, e.g. 0 under way using engine, 1 at anchor, 5 moored. Empty for Class B transmitters, which do not send it.                                        | `Status`            | `NavigationalStatus`      |
+| `date`        | date      | UTC date of `ts`; the Parquet files are partitioned by it.                                                                                                                   |                     |                           |
+
+## Table 2. Historical AIS data (NOAA MarineCadastre, 2023 and 2024 daily files)
+
+One CSV per day covering all US waters, one row per vessel position report. The archive keeps about one report per vessel per minute. Example: 2024-07-01 has 8,999,649 rows from 22,651 vessels. The 2023 files have the same columns.
 
 | Column             | Type      | Description                                                                                                                                           |
 | :----------------- | :-------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -24,7 +48,7 @@ One CSV per day covering all US waters, one row per vessel position report. The 
 | `Cargo`            | integer   | Cargo type code from the vessel's static data. Mostly empty for Class B.                                                                              |
 | `TransceiverClass` | text      | AIS equipment class: `A` (large commercial vessels, required by law) or `B` (smaller vessels, fewer fields, less frequent reports).                   |
 
-## Table 2. Live AIS feed (AISStream.io WebSocket)
+## Table 3. Live AIS feed (AISStream.io WebSocket)
 
 Each message is a JSON object with a `MessageType`, a `MetaData` block, and a `Message` block holding the decoded AIS fields. Position reports and static data (vessel type, size) arrive as separate message types. The last column shows the matching NOAA column.
 

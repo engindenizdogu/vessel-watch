@@ -1,6 +1,8 @@
 """Batch job: clean the NOAA daily CSVs in data/raw into date-partitioned Parquet in data/clean."""
 
-from pyspark.sql import DataFrame
+from typing import Any
+
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import DoubleType, IntegerType, LongType, StringType, StructField, StructType
 
@@ -8,7 +10,7 @@ from pipeline.clean import batch_steps
 from pipeline.config import load_config
 from pipeline.spark import get_spark
 
-# Columns as published in AIS_2024_MM_DD.csv (verified against AIS_2024_07_01, see docs/SOURCES.md).
+# Columns as published in the daily CSVs (verified against AIS_2024_07_01 and AIS_2023_03_14, see docs/SOURCES.md).
 NOAA_SCHEMA = StructType([
     StructField("MMSI", LongType()),
     StructField("BaseDateTime", StringType()),
@@ -45,24 +47,28 @@ def to_shared_schema(noaa: DataFrame) -> DataFrame:
     )
 
 
-def main() -> None:
-    cfg = load_config()
-    spark = get_spark(cfg, "vessel-watch-batch")
-    spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")  # rewrite only the dates we read
-
-    raw_glob = str(cfg["paths"]["raw"] / "AIS_*.csv")
-    df = to_shared_schema(spark.read.csv(raw_glob, header=True, schema=NOAA_SCHEMA))
-    print(f"read {raw_glob}: {df.count():,} rows")
+def clean_csvs(spark: SparkSession, cfg: dict[str, Any], paths: list[str]) -> None:
+    """Clean NOAA daily CSVs (paths or globs) into data/clean, rewriting only the dates they contain."""
+    spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
+    df = to_shared_schema(spark.read.csv(paths, header=True, schema=NOAA_SCHEMA))
+    print(f"read {', '.join(paths)}: {df.count():,} rows")
 
     for i, (name, step) in enumerate(batch_steps(cfg)):
         df = step(df)
         if i == 0:
-            df = df.cache()  # the harbor subset is small; later counts reuse it instead of rereading the CSVs
+            df = harbor = df.cache()  # the harbor subset is small; later counts reuse it instead of rereading the CSVs
         print(f"{name}: {df.count():,} rows")
 
     out = cfg["paths"]["clean"]
     df.withColumn("date", F.to_date("ts")).write.mode("overwrite").partitionBy("date").parquet(str(out))
+    harbor.unpersist()  # the history job cleans many days in one session
     print(f"wrote {out}")
+
+
+def main() -> None:
+    cfg = load_config()
+    spark = get_spark(cfg, "vessel-watch-batch")
+    clean_csvs(spark, cfg, [str(cfg["paths"]["raw"] / "AIS_*.csv")])
 
 
 if __name__ == "__main__":

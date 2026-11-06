@@ -26,9 +26,11 @@ Available now:
 - `make live-probe [DURATION=120]`: listen to the live feed over the harbor box, print sample messages and a summary, save raw JSON lines to `data/live_sample/`
 - `make live`: run the live producer (AISStream over the harbor box to `ais.raw`, keyed by MMSI) until Ctrl+C; needs `make kafka-up` and `AISSTREAM_API_KEY` in `.env`
 - `make stream [RUN=live|replay]`: run the Structured Streaming job (`ais.raw` to `data/serving/positions/`, checkpoint per run); applies the stateless cleaning steps
-- `make app`: start the Streamlit dashboard (live map from serving Parquet via DuckDB)
-- `make download START=YYYY-MM-DD END=YYYY-MM-DD`: download NOAA daily CSVs into `data/raw/` (about 1 GB per day unzipped; existing days skipped)
-- `make clean-data`: clean every `data/raw/AIS_*.csv` with Spark into `data/clean/` (Parquet by date), logging row counts per step
+- `make app`: start the Streamlit dashboard on port 8501: a Live page (latest positions from serving Parquet) a History page (map at a chosen time on a cleaned NOAA day, vessels per hour), both read through DuckDB, and a Data Dictionary page that renders `docs/DATA_DICTIONARY.md`
+- `make tunnel`: public demo link; a Cloudflare Quick Tunnel to the local dashboard (needs `cloudflared`; random URL per start, works only while the laptop runs the pipeline)
+- `make history`: the main way to get NOAA history. Samples random blocks of consecutive days (config `history`), then downloads, cleans into `data/clean/` (Parquet by date, row counts per step), and deletes each raw day in turn; skips days already cleaned
+- `make download START=YYYY-MM-DD END=YYYY-MM-DD` (optional): download specific NOAA days into `data/raw/` and keep the CSVs (about 1 GB per day unzipped; existing days skipped)
+- `make clean-data` (optional): clean every `data/raw/AIS_*.csv` with Spark into `data/clean/`, e.g. to re-clean kept CSVs after a rule change
 - `make profile`: profile `data/clean/` with DuckDB (traffic per hour, report intervals by status, implied speeds) and write `docs/DATA_PROFILE.md`
 
 Planned:

@@ -14,9 +14,15 @@ Checked 2026-10-22. No account or request needed for bulk downloads.
 | Official README | https://github.com/ocm-marinecadastre/ais-vessel-traffic/blob/main/README.md | Lists download options and GeoParquet file names |
 | AIS FAQ | https://coast.noaa.gov/data/marinecadastre/ais/faq.pdf | |
 | AccessAIS custom orders | https://hub.marinecadastre.gov/datasets/accessais | Map-based ordering; was unavailable when checked. Not needed. |
+| Vessel Traffic landing page | https://hub.marinecadastre.gov/pages/vesseltraffic | Checked 2026-11-06: returns 200, title "Vessel Traffic - Marine Cadastre". Content is rendered by JavaScript, so not read by script. Linked from the dashboard as the NOAA overview. |
 | AIS Vessel Tracks 2026 | https://www.fisheries.noaa.gov/inport/item/80415 | Track lines, not point reports |
 
 2025: no daily point files in the bulk folder (`.../AISDataHandler/2025/` returns 404). Only monthly track files exist, which don't support gap detection.
+
+Availability, checked 2026-11-06 with a HEAD request for every day of 2023 and 2024:
+- 2024: only July 1 to December 31 work (184 days). January 1 to June 30 are listed in the index but return 404.
+- 2023: all 365 days return 200 (https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2023/), about 280-330 MB zipped each. Same file pattern (`AIS_2023_MM_DD.zip`) and the same 17 CSV columns and timestamp format as 2024 (header read from `AIS_2023_03_14.zip`).
+- 2022 and 2021 folders exist but were not checked.
 
 CSV columns (from `AIS_2024_07_01.zip`):
 ```
@@ -73,3 +79,12 @@ Checked 2026-10-22; both downloads return HTTP 200. Contents not yet inspected.
 | :-- | :-- | :-- |
 | NOAA tides, The Battery (8518750) | https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?station=8518750&product=water_level&datum=MLLW&date=latest&units=metric&time_zone=gmt&format=json&application=vessel-watch | Free, no key. Water level works; wind is not offered at this station. |
 | Open-Meteo historical weather | https://archive-api.open-meteo.com/v1/archive?latitude=40.70&longitude=-74.01&start_date=2024-07-01&end_date=2024-07-01&hourly=wind_speed_10m | Free, no key. Hourly wind works; visibility came back undefined. |
+
+## Hosting (public demo link)
+
+Checked 2026-11-05. The professor asked for a public link; chosen: Cloudflare Quick Tunnel to the local dashboard (`make tunnel`).
+
+| What | Link | Notes |
+| :-- | :-- | :-- |
+| Cloudflare Quick Tunnels | https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/ | No account or domain needed. Limits from the page: no uptime guarantee, 200 in-flight requests, no Server-Sent Events, hostname changes on each start. WebSockets (which Streamlit needs) are not mentioned; test before relying on it. |
+| Streamlit Community Cloud dependencies | https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies | Not chosen. Would need a committed data snapshot; cannot run Kafka or Spark. |

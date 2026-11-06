@@ -9,6 +9,7 @@ paths:
   serving: data/serving
   positions: data/serving/positions  # position reports written by the streaming job
   models: data/models
+  data_dictionary: docs/DATA_DICTIONARY.md   # shown on the dashboard's Data Dictionary page
 
 spark:
   driver_memory: 4g
@@ -28,8 +29,18 @@ signal_gap:
   stationary_statuses: [1, 5]    # 1 at anchor, 5 moored
 
 noaa:
-  # Daily zipped CSVs; 2024 verified (2025 has no daily point files, see docs/SOURCES.md)
+  # Daily zipped CSVs; 2023 and 2024 verified (2025 has no daily point files, see docs/SOURCES.md)
   file_url: https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{year}/AIS_{year}_{month:02d}_{day:02d}.zip
+
+# Random sample of NOAA history for `make history`. Days are drawn in blocks of consecutive days so that
+# arrivals crossing midnight and the "same hour last week" baseline have the days they need.
+history:
+  ranges:                        # days that exist in the archive (checked 2026-11-06, see docs/SOURCES.md)
+    - {start: 2023-01-01, end: 2023-12-31}
+    - {start: 2024-07-01, end: 2024-12-31}   # 2024 before July 1 returns 404
+  blocks: 4                      # random blocks; raising this keeps the blocks already drawn
+  block_days: 14                 # 7 days of lag history plus 7 days with a "same hour last week" value
+  seed: 627                      # fixed so the sample is reproducible
 
 kafka:
   bootstrap_servers: localhost:9092
@@ -46,6 +57,8 @@ dashboard:
   recent_minutes: 15             # vessels shown on the map: last report within this window
   refresh_seconds: 30
   timezone: America/New_York     # display only; stored timestamps stay UTC
+  history_step_minutes: 5        # history page: time slider step, and how far Play advances per tick
+  play_seconds: 1                # history page: seconds between Play ticks
 
 live:
   url: wss://stream.aisstream.io/v0/stream

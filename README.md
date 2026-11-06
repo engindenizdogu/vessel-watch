@@ -23,15 +23,19 @@ make test
 
 ## Historical data
 
-NOAA daily CSVs (about 1 GB per day unzipped) go in `data/raw/` (git-ignored).
-
 ```
-make download START=2024-07-01 END=2024-07-07   # download days into data/raw/ (existing days are skipped)
-make clean-data                                  # Spark: clean data/raw/ into data/clean/ (Parquet by date)
-make profile                                     # summarize data/clean/ into docs/DATA_PROFILE.md
+make history    # sample NOAA days, download, clean into data/clean/ (Parquet by date), delete the raw files
+make profile    # summarize data/clean/ into docs/DATA_PROFILE.md
 ```
 
-`make clean-data` prints the row count after each cleaning step.
+`make history` draws random blocks of consecutive days; the `history` section of `config.yaml` sets the date ranges, the number of blocks, the days per block, and the seed. It downloads, cleans, and deletes one raw day at a time (NOAA daily CSVs are about 1 GB unzipped), so only about 1.4 GB of raw data is on disk at once. It prints the row count after each cleaning step. Days already in `data/clean/` are skipped, so it can be stopped with Ctrl+C and rerun. The default sample (4 blocks of 14 days) takes about 35-45 minutes.
+
+Optional, for specific days or to keep the raw CSVs (for example, to re-clean after changing a cleaning rule without downloading again):
+
+```
+make download START=2024-07-01 END=2024-07-07   # download days into data/raw/ and keep them (existing days are skipped)
+make clean-data                                  # clean every CSV in data/raw/ into data/clean/
+```
 
 ## Live dashboard
 
@@ -44,9 +48,17 @@ make stream        # Spark Structured Streaming: ais.raw to data/serving/positio
 make app           # Streamlit dashboard at http://localhost:8501
 ```
 
-The map shows each vessel's latest position from the last 15 minutes and refreshes every 30 seconds. The first `make stream` downloads the Spark Kafka connector, so it takes a minute to start. Stop each one with Ctrl+C, and the broker with `make kafka-down`.
+The Live page shows each vessel's latest position from the last 15 minutes and refreshes every 30 seconds. The Data Dictionary page shows [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md). The History page shows the harbor at a chosen time on any day in `data/clean/`, with a Play button and a vessels-per-hour chart; it needs only `make app`, not Kafka. Times are New York time. NOAA files are UTC days, so the last 4-5 hours of a day are empty unless the next day is also downloaded. The first `make stream` downloads the Spark Kafka connector, so it takes a minute to start. Stop each one with Ctrl+C, and the broker with `make kafka-down`.
 
 `make live-probe [DURATION=120]` listens to the live feed without Kafka and saves the raw messages to `data/live_sample/`, which is useful for checking the feed and the API key.
+
+## Public demo link
+
+With the live dashboard running, `make tunnel` (needs `brew install cloudflared`) opens a [Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) to `localhost:8501` and prints a public `https://<random>.trycloudflare.com` URL. No Cloudflare account is needed.
+
+- The link works only while the laptop is awake and running all four commands above.
+- The URL changes every time the tunnel restarts, so share the new one each time.
+- Anyone with the URL can view the dashboard. Only the dashboard is exposed, not Kafka.
 
 ## Configuration
 

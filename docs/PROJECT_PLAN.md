@@ -45,7 +45,7 @@ Analytics tasks covered: data cleaning, time-series forecasting, anomaly detecti
 ## 4. Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph hist["Historical (batch)"]
         noaa["NOAA AIS archive<br/>daily CSVs"] --> batch["Spark batch clean"]
         batch --> clean[("Clean Parquet<br/>by date")]
@@ -143,13 +143,14 @@ Moved live ingestion and the dashboard skeleton here from weeks 3 and 5: the wee
 
 **Week 3 (Nov 2-8): More history, signal gap, replay feed, geofences and arrivals, baseline**
 The heaviest week; listed in dependency order. If it runs over, the baseline moves to the start of week 4.
-- Download and clean 2-4 consecutive weeks of NOAA data (`make download`, `make clean-data`); arrivals and the baseline need it
+- Download and clean NOAA history as random blocks of consecutive days from 2023 and July-December 2024 (`make history`; sample size, block length, and seed in `config.yaml`, default 4 blocks of 14 days); arrivals and the baseline need consecutive days
 - Rule-based signal-gap detector in batch and streaming (stateful); this is the main gap detector, not only a baseline
 - Replay producer for Spark (moved from week 2)
 - Choose geofences and the arrival window N, then count arrivals per hour (moved from week 1)
 - Check the harbor bounding box against the data: is traffic cut off at the edges? (moved from week 1)
 - Seasonal-naive baseline for the arrival forecast
-- Read AISStream's terms and rate limits in a browser; find out whether one report per vessel per minute is throttling or coverage (open question 3)
+- Read AISStream's terms and rate limits in a browser; find out whether one report per vessel per minute is throttling or coverage (open question 3). The terms must also allow showing the live data on the public demo link
+- Public demo link for the professor (requested Nov 5, priority): `make tunnel` exposes the local dashboard through a Cloudflare Quick Tunnel. Not a production deployment: the link works only while the laptop runs the pipeline
 
 **Week 4 (Nov 9-15): Forecast model, off-route, evaluation**
 - Offline training on clean historical features; forecast evaluated against the baseline
