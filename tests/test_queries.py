@@ -12,7 +12,7 @@ def write_day(root, day: str, rows: list[tuple[str, int]]) -> None:
     folder = root / f"date={day}"
     folder.mkdir(parents=True)
     df = pd.DataFrame(rows, columns=["ts", "mmsi"]).assign(
-        ts=lambda d: pd.to_datetime(d["ts"]), lat=40.6, lon=-74.0, sog=1.0, cog=0.0,
+        ts=lambda d: pd.to_datetime(d["ts"]), name="EXAMPLE", lat=40.6, lon=-74.0, sog=1.0, cog=0.0,
         heading=0, vessel_type=70, status=0,
     )
     df.to_parquet(folder / "part-0.parquet", index=False)
@@ -59,3 +59,11 @@ def test_vessels_per_hour_counts_distinct_vessels(tmp_path):
     ])
     df = vessels_per_hour(parquet_glob(tmp_path), datetime(2024, 7, 1, 10), datetime(2024, 7, 1, 12))
     assert df["vessels"].tolist() == [2, 1]
+
+
+def test_latest_positions_fills_columns_missing_from_older_files(tmp_path):
+    write_day(tmp_path, "2024-07-01", [("2024-07-01 11:55:00", 1)])
+    old = tmp_path / "date=2024-07-01" / "part-0.parquet"
+    pd.read_parquet(old).drop(columns="name").to_parquet(old, index=False)
+    df = latest_positions(parquet_glob(tmp_path), 15, datetime(2024, 7, 1, 12))
+    assert list(df.columns)[:3] == ["mmsi", "name", "ts"] and df["name"].isna().all()

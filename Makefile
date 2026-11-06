@@ -2,7 +2,7 @@
 KAFKA_TOPICS = docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092
 APP_PORT = 8501
 
-.PHONY: env kafka-up kafka-down test live-probe live stream app tunnel clean-data profile download history
+.PHONY: env kafka-up kafka-down test live-probe live stream app tunnel clean-data profile download history gaps
 
 env:
 	uv sync
@@ -49,3 +49,6 @@ download:
 
 history:
 	uv run python -m ingest.noaa_history
+
+gaps:
+	uv run python -m pipeline.gap_job

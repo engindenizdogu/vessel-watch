@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta
 
 import streamlit as st
 
-from app.charts import hourly_chart, vessel_map, with_local_time
+from app.charts import for_display, hourly_chart, vessel_map
 from app.queries import available_days, latest_positions, local_to_utc, parquet_glob, vessels_per_hour
 from pipeline.config import load_config
 
@@ -16,9 +16,11 @@ STEP = timedelta(minutes=dash["history_step_minutes"])
 
 st.title("New York Harbor: History")
 st.markdown(
-    "Pick a day from the NOAA AIS archive and a time to see where vessels were, or press **Play** to "
-    "step through the day. Days come from [NOAA's AIS archive](https://hub.marinecadastre.gov/pages/vesseltraffic) "
-    "(2023 and 2024) and are cleaned with Spark."
+    "Pick a day and a time to see where vessels were, or press **Play** to step through the day. The map "
+    f"shows each vessel's latest report in the {dash['recent_minutes']} minutes before the chosen time, and "
+    "the chart below counts vessels per hour. Days come from "
+    "[NOAA's AIS archive](https://hub.marinecadastre.gov/pages/vesseltraffic) (2023 and July to December "
+    "2024) and are cleaned with the same Spark code as the live feed. Times are New York time."
 )
 days = available_days(cfg["paths"]["clean"])
 if not days:
@@ -50,8 +52,9 @@ def day_view(day: date) -> None:
             f"No reports in the {minutes} minutes before {t:%H:%M}. NOAA files are UTC days, so late evening "
             "in New York needs the next day's file, which may not be in the sample."
         )
+        vessel_map(df, cfg["harbor_bbox"])
     else:
-        shown = with_local_time(df, TZ)
+        shown = for_display(df, TZ)
         vessel_map(shown, cfg["harbor_bbox"])
 
     hourly = vessels_per_hour(GLOB, local_to_utc(day, time(0), TZ), local_to_utc(day + timedelta(days=1), time(0), TZ))

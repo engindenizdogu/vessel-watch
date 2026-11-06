@@ -1,5 +1,5 @@
 """Shared cleaning rules for position reports in the shared schema
-(ts, mmsi, lat, lon, sog, cog, heading, vessel_type, status).
+(ts, mmsi, name, lat, lon, sog, cog, heading, vessel_type, status).
 
 Each step is a DataFrame -> DataFrame function. The batch job runs all steps and logs row counts;
 the streaming job runs only the stateless ones, since the stateful ones need ordered per-vessel history.
@@ -42,6 +42,12 @@ def null_unavailable(df: DataFrame) -> DataFrame:
     )
 
 
+def tidy_names(df: DataFrame) -> DataFrame:
+    """Trim vessel names and replace empty ones with null (live names can be blank or padded with spaces)."""
+    name = F.trim(F.col("name"))
+    return df.withColumn("name", F.when(name != "", name))
+
+
 def drop_duplicates(df: DataFrame) -> DataFrame:
     """Keep one report per (MMSI, timestamp)."""
     return df.dropDuplicates(["mmsi", "ts"])
@@ -80,6 +86,7 @@ def stateless_steps(cfg: dict[str, Any]) -> list[Step]:
         ("drop missing keys", drop_missing_keys),
         ("drop invalid MMSI", lambda df: drop_invalid_mmsi(df, c["mmsi_min"], c["mmsi_max"])),
         ("null unavailable codes", null_unavailable),
+        ("tidy names", tidy_names),
     ]
 
 

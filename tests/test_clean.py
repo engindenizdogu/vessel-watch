@@ -7,6 +7,7 @@ from pipeline.clean import (
     drop_missing_keys,
     drop_position_spikes,
     null_unavailable,
+    tidy_names,
 )
 
 SCHEMA = "ts timestamp, mmsi long, lat double, lon double, sog double, cog double, heading int"
@@ -75,3 +76,8 @@ def test_spike_check_is_per_vessel(spark):
 def test_same_timestamp_is_not_a_spike(spark):
     df = spark.createDataFrame([row(minute=0, lat=40.5), row(minute=1, lat=40.9), row(minute=1, lat=40.5)], SCHEMA)
     assert drop_position_spikes(df, 50).count() == 3
+
+
+def test_tidy_names_trims_and_nulls_blanks(spark):
+    df = spark.createDataFrame([("EXAMPLE VESSEL   ",), ("    ",), ("",), (None,)], "name string")
+    assert [r.name for r in tidy_names(df).collect()] == ["EXAMPLE VESSEL", None, None, None]

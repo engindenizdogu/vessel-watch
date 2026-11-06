@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 import duckdb
 import pandas as pd
 
+POSITION_COLUMNS = ["mmsi", "name", "ts", "lat", "lon", "sog", "cog", "heading", "vessel_type", "status"]
+
 
 def parquet_glob(folder: Path) -> str:
     """Glob for every Parquet file under a `date=`-partitioned folder."""
@@ -34,10 +36,10 @@ def latest_positions(glob: str, minutes: int, as_of: datetime) -> pd.DataFrame:
     """Each vessel's latest report in the `minutes` up to `as_of` (naive UTC); empty if no Parquet exists yet."""
     start = as_of - timedelta(minutes=minutes)
     try:
-        return _query(
+        df = _query(
             f"""
-            select mmsi, ts, lat, lon, sog, cog, heading, vessel_type, status
-            from read_parquet('{glob}', hive_partitioning = true)
+            select * exclude (date)
+            from read_parquet('{glob}', hive_partitioning = true, union_by_name = true)
             where date between ? and ? and ts > ? and ts <= ?
             qualify row_number() over (partition by mmsi order by ts desc) = 1
             """,
@@ -45,6 +47,7 @@ def latest_positions(glob: str, minutes: int, as_of: datetime) -> pd.DataFrame:
         )
     except duckdb.IOException:  # no Parquet written yet
         return pd.DataFrame()
+    return df.reindex(columns=POSITION_COLUMNS)  # files written before a column was added lack it
 
 
 def vessels_per_hour(glob: str, start: datetime, end: datetime) -> pd.DataFrame:

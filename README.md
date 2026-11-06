@@ -26,6 +26,7 @@ make test
 ```
 make history    # sample NOAA days, download, clean into data/clean/ (Parquet by date), delete the raw files
 make profile    # summarize data/clean/ into docs/DATA_PROFILE.md
+make gaps       # find signal gaps in data/clean/ and write them to data/gaps/
 ```
 
 `make history` draws random blocks of consecutive days; the `history` section of `config.yaml` sets the date ranges, the number of blocks, the days per block, and the seed. It downloads, cleans, and deletes one raw day at a time (NOAA daily CSVs are about 1 GB unzipped), so only about 1.4 GB of raw data is on disk at once. It prints the row count after each cleaning step. Days already in `data/clean/` are skipped, so it can be stopped with Ctrl+C and rerun. The default sample (4 blocks of 14 days) takes about 35-45 minutes.

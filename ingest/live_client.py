@@ -1,7 +1,7 @@
 """Live producer: stream AISStream position reports over the harbor box into Kafka.
 
 Each position report becomes one JSON message on the raw topic, keyed by MMSI, with the shared
-schema: ts, mmsi, lat, lon, sog, cog, heading, vessel_type, status. Values are passed through as
+schema: ts, mmsi, name, lat, lon, sog, cog, heading, vessel_type, status. Values are passed through as
 received; cleaning happens in Spark.
 """
 
@@ -53,6 +53,7 @@ def to_record(msg: dict[str, Any], vessel_types: dict[int, int]) -> dict[str, An
     return {
         "ts": parse_time(meta["time_utc"]),
         "mmsi": mmsi,
+        "name": meta.get("ShipName"),  # may be empty or padded; tidied in Spark
         "lat": body["Latitude"],
         "lon": body["Longitude"],
         "sog": body.get("Sog"),

@@ -16,6 +16,7 @@ from pipeline.spark import get_spark
 RAW_SCHEMA = StructType([
     StructField("ts", StringType()),
     StructField("mmsi", LongType()),
+    StructField("name", StringType()),
     StructField("lat", DoubleType()),
     StructField("lon", DoubleType()),
     StructField("sog", DoubleType()),
@@ -58,7 +59,8 @@ def main() -> None:
         positions = step(positions)
 
     query = (
-        positions.writeStream.format("parquet")
+        positions.coalesce(1)  # one file per micro-batch (per date) instead of one per Kafka partition
+        .writeStream.format("parquet")
         .option("path", str(cfg["paths"]["positions"]))
         .option("checkpointLocation", str(cfg["paths"]["checkpoints"] / f"positions_{args.run}"))
         .partitionBy("date")

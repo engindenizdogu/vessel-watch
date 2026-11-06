@@ -10,26 +10,42 @@ SELECTED = "#2a78d6"
 OTHER = "#86b6ef"
 
 
-def with_local_time(df: pd.DataFrame, tz: str) -> pd.DataFrame:
-    """Copy of `df` with the UTC `ts` column as local time text (pydeck tooltips need plain values)."""
+def for_display(df: pd.DataFrame, tz: str) -> pd.DataFrame:
+    """Copy of `df` with `ts` as local time text and missing names filled (pydeck tooltips need plain values)."""
     local = df["ts"].dt.tz_localize("UTC").dt.tz_convert(tz)
-    return df.assign(ts=local.dt.strftime("%Y-%m-%d %H:%M:%S %Z"))
+    return df.assign(ts=local.dt.strftime("%Y-%m-%d %H:%M:%S %Z"), name=df["name"].fillna("(no name)"))
 
 
 def vessel_map(df: pd.DataFrame, box: dict[str, float]) -> None:
-    """Draw one dot per vessel over the harbor box, with MMSI, speed, course, and report time on hover."""
-    st.pydeck_chart(pdk.Deck(
-        layers=[pdk.Layer(
+    """Draw the tracked area's outline and one dot per vessel (name, MMSI, speed, course, time on hover).
+
+    `df` may be empty; the outline is drawn either way so the map always shows the area covered.
+    """
+    corners = [(box["lon_min"], box["lat_min"]), (box["lon_max"], box["lat_min"]),
+               (box["lon_max"], box["lat_max"]), (box["lon_min"], box["lat_max"])]
+    layers = [pdk.Layer(
+        "PathLayer", data=[{"path": corners + corners[:1]}], get_path="path",
+        get_color=[128, 128, 128, 220], width_min_pixels=2,  # mid gray reads on light and dark base maps
+    )]
+    if not df.empty:
+        layers.append(pdk.Layer(
             "ScatterplotLayer", data=df, get_position=["lon", "lat"],
             get_fill_color=[42, 120, 214, 200], get_radius=120, radius_min_pixels=3, pickable=True,
-        )],
+        ))
+    st.pydeck_chart(pdk.Deck(
+        layers=layers,
         initial_view_state=pdk.ViewState(
             latitude=(box["lat_min"] + box["lat_max"]) / 2,
             longitude=(box["lon_min"] + box["lon_max"]) / 2,
             zoom=10,
         ),
-        tooltip={"text": "MMSI {mmsi}\nSOG {sog} kn\nCOG {cog}\n{ts}"},
+        tooltip={"text": "{name}\nMMSI {mmsi}\nSOG {sog} kn\nCOG {cog}\n{ts}"},
     ))
+    st.caption(
+        f"Gray outline: the area tracked, New York Harbor and its approaches ({box['lat_min']:.2f} to "
+        f"{box['lat_max']:.2f}° N, {-box['lon_max']:.2f} to {-box['lon_min']:.2f}° W). "
+        "Hover over a vessel for its name, speed, and course."
+    )
 
 
 def hourly_chart(df: pd.DataFrame, selected: str) -> alt.Chart:

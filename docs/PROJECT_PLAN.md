@@ -30,7 +30,7 @@ Analytics tasks covered: data cleaning, time-series forecasting, anomaly detecti
 | Geofence | Named polygon (harbor entrance, anchorage, terminal zones) | Which zones have enough traffic |
 | **Arrival** | A vessel's first report inside a geofence after at least N minutes outside it; one count per vessel per visit | N, and which geofences to forecast |
 | Forecast target | Arrivals per hour per geofence | Zone granularity |
-| **Signal gap** | A vessel that was reporting regularly goes silent longer than a threshold. Class A AIS normally reports every few seconds while moving and about every 3 minutes at anchor, so the threshold must depend on vessel status | Draft from the 2-day profile (`docs/DATA_PROFILE.md`): 10 min under way, 30 min at anchor, moored, or status missing; fine-tune with more history |
+| **Signal gap** | A Class A vessel (it reports a navigational status) that was reporting regularly (at least 5 reports in the 15 minutes before) goes silent longer than its threshold: the larger of a minimum for its state and 8 times the median of its last 10 report intervals. State comes from speed, not status: moving at 1 knot or more (minimum 10 min), otherwise stopped, which includes anchored and moored (minimum 30 min). Skip vessels last seen within 2 km of the harbor box edge (they probably left). Never raise a gap past the end of the data; live alerts only while the feed is delivering reports from other vessels. Each gap is labeled moving or stopped and keeps the declared status | Decided Nov 6 from 2 NOAA days: status is unreliable (most "under way" gaps were vessels doing under 1 knot); Class B reports never carry a status (checked on 1.3 M rows of a 2023 day); 69 of 78 gaps near the edge were vessels seen just outside the box. Recalibrate after `make history`. If the 2 km edge rule proves too crude, keep a 10 km margin for gap detection only (+4.4% rows) |
 | **Off-route** | A report in a grid cell whose historical traffic density is below a threshold, or far from a learned lane | Grid size, density percentile |
 
 **Cleaning rules (draft, log row counts after each)**
@@ -97,6 +97,8 @@ Three paths share one cleaning and feature module (`pipeline/clean.py`, `pipelin
 - Run one source at a time (replay or live). Replay event times are months older than live ones and would break the watermark. Give each run its own checkpoint directory.
 - The dashboard forecast runs on replayed data. Same-hour-last-week lags need a week of live history, so a live forecast is only possible once the training sink has collected it.
 - Kafka runs in Docker and Spark on the host: set `advertised.listeners` to `localhost` so the host can connect.
+- Each micro-batch writes one Parquet file per date (`coalesce(1)`, 60-second trigger). Without it, every 30-second batch wrote one small file per Kafka partition (about 530 files for 4,000 reports), which slows the dashboard queries.
+- When the stream restarts after a break, every vessel seen before the break would look silent at once. The streaming gap detector must only alert while the feed is delivering reports from other vessels.
 
 ## 5. Tech Stack
 
@@ -108,7 +110,7 @@ Three paths share one cleaning and feature module (`pipeline/clean.py`, `pipelin
 | Storage | Parquet partitioned by date; DuckDB for serving | |
 | Geospatial | Rounded lat/lon grid built with native Spark expressions; Shapely only to map geofence polygons to grid cells once, offline | Pre-filter by bounding box. Open-source Spark has no built-in H3, so `h3` would run as a row-wise Python UDF |
 | Forecasting | Spark aggregation, then scikit-learn or LightGBM on the small hourly series | Classical alternatives: SARIMAX, autoregressive Poisson |
-| Anomaly detection | Batch: Spark window functions (time since last report). Streaming: `applyInPandasWithState`. Density grid for off-route; optional isolation forest | See streaming design notes in section 4 |
+| Anomaly detection | Signal-gap rule as plain pandas in `models/gaps.py`, run per vessel with `groupBy(...).applyInPandas` in batch and `applyInPandasWithState` in streaming, so both use the same code. Density grid for off-route; optional isolation forest | See streaming design notes in section 4 |
 | API and UI | FastAPI, Streamlit with pydeck (or Folium) | |
 | Orchestration | Scripts and a Makefile | No Airflow |
 | Tooling | `uv` or `venv`, Git, pytest, Docker Compose | |
@@ -123,36 +125,39 @@ Three paths share one cleaning and feature module (`pipeline/clean.py`, `pipelin
 | :-- | :-- | :-- | :-- |
 | 1 | Oct 19-25 | Data access, definitions, first preprocessing | Done; arrival and off-route definitions moved to weeks 3 and 4 |
 | 2 | Oct 26-Nov 1 | Kafka setup, live ingestion, dashboard skeleton, historical pipeline | Done; screenshot for the deliverable pending |
-| 3 | Nov 2-8 | More history, signal gap, replay feed, geofences and arrivals, baseline | |
-| 4 | Nov 9-15 | Forecast model, off-route, evaluation | |
+| 3 | Nov 2-8 | More history, signal gap, geofences and arrivals, baseline | In progress; replay feed moved to week 4 |
+| 4 | Nov 9-15 | Replay feed, forecast model, off-route, evaluation | |
 | 5 | Nov 16-22 | Dashboard and integration | |
 | 6 | Nov 23-29 | Final checks and writeup | |
 | 7 | Nov 30-Dec 6 | Buffer week | |
 
 **Week 1 (Oct 19-25): Data access, definitions, first preprocessing**
-- Project repo and environment setup
-- Test the data source: get a sample set and produce the first cleaned Parquet
-- Define "arrival" and "anomaly" (signal gap drafted from the data profile; arrival moved to week 3, off-route to week 4)
+- OK Project repo and environment setup
+- OK Test the data source: get a sample set and produce the first cleaned Parquet
+- OK Define "arrival" and "anomaly" (signal gap drafted from the data profile; arrival moved to week 3, off-route to week 4)
 
 **Week 2 (Oct 26-Nov 1): Kafka setup, live ingestion, dashboard skeleton, historical pipeline**
 Moved live ingestion and the dashboard skeleton here from weeks 3 and 5: the week 2 course deliverable is a screenshot of the app.
-- Kafka broker and Spark pipeline
-- Live Kafka producer on the live AIS feed
-- Dashboard skeleton: live map of latest vessel positions, reading serving Parquet through DuckDB (FastAPI added later)
-- Shared cleaning module and batch cleaning job on the historical sample
+- OK Kafka broker and Spark pipeline
+- OK Live Kafka producer on the live AIS feed
+- OK Dashboard skeleton: live map of latest vessel positions, reading serving Parquet through DuckDB (FastAPI added later)
+- OK Shared cleaning module and batch cleaning job on the historical sample
 
-**Week 3 (Nov 2-8): More history, signal gap, replay feed, geofences and arrivals, baseline**
+**Week 3 (Nov 2-8): More history, signal gap, geofences and arrivals, baseline**
 The heaviest week; listed in dependency order. If it runs over, the baseline moves to the start of week 4.
-- Download and clean NOAA history as random blocks of consecutive days from 2023 and July-December 2024 (`make history`; sample size, block length, and seed in `config.yaml`, default 4 blocks of 14 days); arrivals and the baseline need consecutive days
-- Rule-based signal-gap detector in batch and streaming (stateful); this is the main gap detector, not only a baseline
-- Replay producer for Spark (moved from week 2)
+- Download and clean NOAA history as random blocks of consecutive days from 2023 and July-December 2024 (`make history`; sample size, block length, and seed in `config.yaml`, default 4 blocks of 14 days); arrivals and the baseline need consecutive days. The command is built; the download started Nov 6
+- Rule-based signal-gap detector in batch and streaming (stateful); this is the main gap detector, not only a baseline. Batch done Nov 6 (`make gaps`, rule in `models/gaps.py`: 367 gaps on the 2 cleaned days, 126 moving and 241 stopped); streaming next
 - Choose geofences and the arrival window N, then count arrivals per hour (moved from week 1)
 - Check the harbor bounding box against the data: is traffic cut off at the edges? (moved from week 1)
 - Seasonal-naive baseline for the arrival forecast
 - Read AISStream's terms and rate limits in a browser; find out whether one report per vessel per minute is throttling or coverage (open question 3). The terms must also allow showing the live data on the public demo link
-- Public demo link for the professor (requested Nov 5, priority): `make tunnel` exposes the local dashboard through a Cloudflare Quick Tunnel. Not a production deployment: the link works only while the laptop runs the pipeline
+- OK Public demo link for the professor (requested Nov 5, priority): `make tunnel` exposes the local dashboard through a Cloudflare Quick Tunnel. Not a production deployment: the link works only while the laptop runs the pipeline
+- OK Dashboard pages (added Nov 6): Live, History (map at a chosen time on a NOAA day, Play, vessels per hour), and Data Dictionary; button navigation, vessel names on hover, an outline of the tracked area on every map, and page descriptions with source links
+- OK Vessel name added to the shared schema for both sources (Nov 6), for display
+- OK Streaming small-file fix (Nov 6): one Parquet file per micro-batch, 60-second trigger
 
-**Week 4 (Nov 9-15): Forecast model, off-route, evaluation**
+**Week 4 (Nov 9-15): Replay feed, forecast model, off-route, evaluation**
+- Replay producer for Spark (moved from week 2, then week 3)
 - Offline training on clean historical features; forecast evaluated against the baseline
 - Off-route alerts, after choosing the grid size and density percentile from the data (moved from week 1)
 - Detection and false-alert rates for both detectors on injected test anomalies
@@ -206,6 +211,7 @@ Notes:
 | Spark feels oversized for the data | Process enough history that Spark does real work; use Structured Streaming for the live path |
 | Kafka and Spark version mismatch | Pin versions in week 1; match the connector package to the Spark and Scala build |
 | Geospatial joins are slow | Pre-filter by bounding box; use a rounded lat/lon grid and map geofences to grid cells |
+| Signal gaps dominated by expected behavior (ferries and tour boats switching AIS off at the dock; ships at berth going quiet for hours) | Label gaps moving or stopped and show moving by default; after `make history`, consider ignoring a vessel that reappears at the same spot hours later, or gaps that start at a terminal geofence |
 | Stateful streaming (gaps, arrivals) is harder than batch | Get the batch version right first with tests, then port the same rule to `applyInPandasWithState` |
 | DuckDB lock errors between writer and API | Streaming writes Parquet only; the API reads it through DuckDB read-only |
 | Dashboard consumes the schedule | Use Streamlit; build the skeleton on mock data early |
@@ -228,26 +234,31 @@ vessel-watch/
   data/                     # git-ignored: raw, clean, checkpoints, serving, models
   ingest/
     noaa_download.py
+    noaa_history.py         # random blocks of NOAA days: download, clean, delete raw
     live_client.py          # live producer
-    replay.py               # replay producer
+    replay.py               # replay producer (week 4)
   pipeline/
     config.py               # loads config.yaml
     clean.py                # shared cleaning logic
     features.py             # shared feature logic
     batch_job.py
     stream_job.py
+    gap_job.py              # batch signal gaps: data/clean to data/gaps
     training_sink.py
   models/
     forecast.py
-    anomalies.py
+    gaps.py                 # signal-gap rule shared by batch and streaming
+    offroute.py
     inject.py               # synthetic anomaly injection (evaluation only)
   api/
     main.py
   app/
-    dashboard.py
+    dashboard.py            # entry point and navigation
+    live.py, history.py, dictionary.py   # pages
+    queries.py, charts.py   # shared DuckDB queries and map/chart components
   tests/
     test_clean.py
-    test_anomalies.py
+    test_gaps.py
     test_features.py
 ```
 
@@ -255,10 +266,10 @@ vessel-watch/
 
 1. Exact due date and any earlier checkpoints (proposal, midterm demo). Known so far: a week 2 deliverable needs a screenshot of the app.
 2. Is a written report or presentation a separate deliverable, and what format?
-3. Does the chosen live feed cover New York Harbor, and what are its rate limits and terms?
+3. Does the chosen live feed cover New York Harbor, and what are its rate limits and terms? Coverage confirmed. Measured Nov 6 (14:00-16:00 UTC, 273 Class A vessels): a vessel reports about every 3 minutes (median 180 s, slowest 10% over 742 s), against about once a minute in NOAA's archive. Throttling or receiver coverage is still unknown, and the terms are unread.
 4. Which geofences have enough traffic to forecast hourly arrivals?
 5. Spark MLlib or scikit-learn/LightGBM for the forecast (state the reason in the report)?
-6. Does the course require the Kafka-to-Parquet training branch? If not, the training sink can be dropped, since training already uses clean historical Parquet.
+6. Does the course require the Kafka-to-Parquet training branch? If not, the training sink can be dropped, since training already uses clean historical Parquet. The streaming job already keeps every live report in `data/serving/positions/`, so a separate sink may be redundant.
 
 ## 12. Report Outline (week 6)
 

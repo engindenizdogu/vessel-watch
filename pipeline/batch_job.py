@@ -37,6 +37,7 @@ def to_shared_schema(noaa: DataFrame) -> DataFrame:
     return noaa.select(
         F.to_timestamp("BaseDateTime").alias("ts"),
         F.col("MMSI").alias("mmsi"),
+        F.col("VesselName").alias("name"),
         F.col("LAT").alias("lat"),
         F.col("LON").alias("lon"),
         F.col("SOG").alias("sog"),

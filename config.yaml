@@ -8,6 +8,7 @@ paths:
   checkpoints: data/checkpoints
   serving: data/serving
   positions: data/serving/positions  # position reports written by the streaming job
+  gaps: data/gaps                # signal gaps found in data/clean by the batch gap job
   models: data/models
   data_dictionary: docs/DATA_DICTIONARY.md   # shown on the dashboard's Data Dictionary page
 
@@ -21,12 +22,18 @@ cleaning:
   mmsi_max: 799999999
   max_implied_knots: 50          # draft: max seen in the 2-day profile is 46.5 kn (fast ferries)
 
-# Draft from the 2-day profile (docs/DATA_PROFILE.md): p99 interval is ~90 s under way, ~540 s at anchor
-# or moored. Fine-tune once more history is loaded.
+# Signal gap (draft, from 2 NOAA days; recalibrate after `make history`). A Class A vessel (it reports a
+# status) that was reporting regularly goes silent longer than its threshold:
+#   threshold = max(minimum for its state, interval_multiplier x median of its last `median_intervals` intervals)
 signal_gap:
-  underway_seconds: 600
-  stationary_seconds: 1800       # used for stationary statuses and a missing status
-  stationary_statuses: [1, 5]    # 1 at anchor, 5 moored
+  moving_knots: 1.0              # speed at or above this is "moving"; below it, or no speed, is "stopped"
+  min_moving_seconds: 600
+  min_stopped_seconds: 1800      # stopped includes anchored and moored vessels
+  interval_multiplier: 8         # 99.9% of normal NOAA intervals are under 7x the vessel's recent median
+  median_intervals: 10
+  regular_reports: 5             # reports needed in the window before the last report
+  regular_window_seconds: 900
+  edge_km: 2.0                   # skip vessels last seen this close to the harbor box edge (likely left)
 
 noaa:
   # Daily zipped CSVs; 2023 and 2024 verified (2025 has no daily point files, see docs/SOURCES.md)
@@ -51,7 +58,7 @@ kafka:
   spark_package: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.9
 
 stream:
-  trigger_seconds: 30            # micro-batch interval
+  trigger_seconds: 60            # micro-batch interval; each batch writes one Parquet file per date
 
 dashboard:
   recent_minutes: 15             # vessels shown on the map: last report within this window

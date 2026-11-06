@@ -31,6 +31,7 @@ Available now:
 - `make history`: the main way to get NOAA history. Samples random blocks of consecutive days (config `history`), then downloads, cleans into `data/clean/` (Parquet by date, row counts per step), and deletes each raw day in turn; skips days already cleaned
 - `make download START=YYYY-MM-DD END=YYYY-MM-DD` (optional): download specific NOAA days into `data/raw/` and keep the CSVs (about 1 GB per day unzipped; existing days skipped)
 - `make clean-data` (optional): clean every `data/raw/AIS_*.csv` with Spark into `data/clean/`, e.g. to re-clean kept CSVs after a rule change
+- `make gaps`: find signal gaps in `data/clean/` with Spark (rule in `models/gaps.py`) and write them to `data/gaps/` (Parquet by date), printing counts by state
 - `make profile`: profile `data/clean/` with DuckDB (traffic per hour, report intervals by status, implied speeds) and write `docs/DATA_PROFILE.md`
 
 Planned:
@@ -40,7 +41,7 @@ Planned:
 
 ## Architecture Rules
 1. **One code path.** Cleaning and feature logic live in `pipeline/clean.py` and `pipeline/features.py` and are imported by the batch job, the streaming job, and training. Never duplicate them (avoids training-serving skew).
-2. **Live and replay share one topic and one consumer.** Both producers emit the same message schema (timestamp, MMSI, lat, lon, speed over ground, course over ground, heading, vessel type, status).
+2. **Live and replay share one topic and one consumer.** Both producers emit the same message schema (timestamp, MMSI, vessel name, lat, lon, speed over ground, course over ground, heading, vessel type, status).
 3. **Key Kafka messages by MMSI** so each vessel stays on one partition. Spark does not preserve Kafka order through shuffles, so gap and arrival logic must sort by the report's event timestamp.
 4. **Training reads Parquet, not Kafka.** Training uses features built from clean historical Parquet and saves the model to a versioned file. The training sink is a separate streaming query with its own checkpoint that stores live history.
 5. **Time-based splits only.** Train on earlier data, test on later data. Never shuffle time series.
@@ -75,5 +76,5 @@ Planned:
 
 ## Definitions (draft, finalized in week 1)
 - **Arrival:** a vessel's first report inside a geofence after at least N minutes outside it, counted once per vessel per visit. Forecast target: arrivals per hour per geofence.
-- **Signal gap:** a vessel that was reporting regularly goes silent longer than a status-dependent threshold.
+- **Signal gap:** a Class A vessel that was reporting regularly goes silent longer than max(minimum for its state, 8 x its median recent interval); state is moving (>= 1 knot, 10 min minimum) or stopped (30 min, includes anchored and moored). Skip vessels last seen near the box edge; never alert past the end of the data. Rule in `models/gaps.py`, parameters in `config.yaml` (`signal_gap`).
 - **Off-route:** a report in a grid cell with historical traffic density below a threshold, or far from a learned lane.

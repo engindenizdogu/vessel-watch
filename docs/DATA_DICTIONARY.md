@@ -1,6 +1,6 @@
 # Data Dictionary
 
-Both sources are cleaned into one shared schema (Table 1), which is what the dashboard shows. Tables 2 and 3 list the raw fields it is built from.
+Both sources are cleaned into one shared schema (Table 1), which is what the dashboard shows. Tables 2 and 3 list the raw fields it is built from, and Table 4 describes the signal gaps found in the historical data.
 
 ## Sources
 
@@ -15,6 +15,7 @@ One row per position report inside the harbor box (latitude 40.40 to 40.95, long
 | :------------ | :-------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------ | :------------------------ |
 | `ts`          | timestamp | Time of the report, stored in UTC. The dashboard shows it in New York time.                                                                                                  | `BaseDateTime`      | `MetaData.time_utc`       |
 | `mmsi`        | integer   | Vessel's 9-digit radio ID. Only ship MMSIs are kept (first digit 2-7); base stations, aids to navigation, and search-and-rescue units are dropped.                           | `MMSI`              | `MetaData.MMSI`           |
+| `name`        | text      | Vessel name, trimmed; empty when the vessel sent none (shown as "(no name)"). Live reports saved before this column was added (early Nov 2026) have none.                                            | `VesselName`        | `MetaData.ShipName`       |
 | `lat`         | decimal   | Latitude in decimal degrees.                                                                                                                                                 | `LAT`               | `Latitude`                |
 | `lon`         | decimal   | Longitude in decimal degrees (negative = west).                                                                                                                              | `LON`               | `Longitude`               |
 | `sog`         | decimal   | Speed over ground, in knots. Empty when the vessel sent "not available" (102.3).                                                                                             | `SOG`               | `Sog`                     |
@@ -74,3 +75,19 @@ Each message is a JSON object with a `MessageType`, a `MetaData` block, and a `M
 | `ReportA.Name` / `ReportB.ShipType`       | `StaticDataReport` | Class B static data sent in two parts: name, then ship type and call sign.                                                             | `VesselName`, `VesselType`      |
 
 Other fields in the messages (`RepeatIndicator`, `Raim`, `CommunicationState`, `Spare`, and similar) are radio-protocol details and are not used.
+
+## Table 4. Signal gaps (`make gaps`, stored in `data/gaps/`)
+
+One row per gap: a Class A vessel that was reporting regularly went silent longer than its threshold (see the signal-gap definition in the project plan). Built from the cleaned historical data (Table 1).
+
+| Column        | Type      | Description                                                                                                       |
+| :------------ | :-------- | :---------------------------------------------------------------------------------------------------------------- |
+| `mmsi`, `name`, `vessel_type`, `status` | | The vessel, as in Table 1. `status` is the status it declared in its last report.                   |
+| `state`       | text      | `moving` (1 knot or more in the last report) or `stopped` (slower, or no speed; includes anchored and moored).    |
+| `last_ts`     | timestamp | Time of the last report before the silence (UTC).                                                                 |
+| `lat`, `lon`, `sog` | decimal | Position and speed in that last report.                                                                    |
+| `threshold_s` | decimal   | Silence allowed, in seconds: the larger of the state minimum and 8 times the vessel's median recent interval.      |
+| `alert_ts`    | timestamp | `last_ts` plus the threshold: when the gap is raised.                                                             |
+| `resumed_ts`  | timestamp | Time of the next report; empty if the vessel was not seen again before the data ends.                             |
+| `gap_s`       | decimal   | Length of the silence in seconds; empty when `resumed_ts` is empty.                                               |
+| `date`        | date      | UTC date of `last_ts`; the Parquet files are partitioned by it.                                                   |

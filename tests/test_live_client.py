@@ -36,7 +36,13 @@ def test_class_a_record():
     assert to_record(CLASS_A, {}) == {
         "ts": "2026-10-23T02:55:26.236983Z", "mmsi": 367797720, "lat": 40.68571833333333,
         "lon": -74.07689, "sog": 0, "cog": 199.2, "heading": 226, "vessel_type": None, "status": 0,
+        "name": None,
     }
+
+
+def test_name_is_passed_through_untrimmed():
+    msg = {**CLASS_A, "MetaData": {**CLASS_A["MetaData"], "ShipName": "EXAMPLE VESSEL      "}}
+    assert to_record(msg, {})["name"] == "EXAMPLE VESSEL      "
 
 
 def test_class_b_record_has_null_status():
