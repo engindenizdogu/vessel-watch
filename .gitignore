@@ -151,7 +151,6 @@ activemq-data/
 
 # Environments
 .env
-.env.example
 .envrc
 .venv
 env/
@@ -229,3 +228,6 @@ checkpoints/
 spark-warehouse/
 metastore_db/
 derby.log
+
+# Docs
+.obsidian/

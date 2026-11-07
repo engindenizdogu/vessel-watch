@@ -4,14 +4,60 @@
 paths:
   raw: data/raw
   clean: data/clean
-  stream_in: data/stream_in      # file-stream fallback input
   live_sample: data/live_sample  # raw messages saved by the live probe
   checkpoints: data/checkpoints
   serving: data/serving
+  positions: data/serving/positions  # position reports written by the streaming job
+  live_incoming: data/live/incoming  # live reports from the streaming history sink, small files, until compacted
+  live_history: data/live/history    # live reports by date, one file per day, cleaned like data/clean (make compact)
+  gaps: data/gaps                # signal gaps found in data/clean by the batch gap job
   models: data/models
+  shutdown_spots: data/models/shutdown_spots.parquet  # places where AIS is routinely switched off, learned by the gap job
+  crossings: data/crossings      # one row per gate crossing (Parquet by date)
+  crossings_hourly: data/crossings_hourly.parquet  # crossings per hour, gate, direction, and vessel group, zeros included
+  data_dictionary: docs/DATA_DICTIONARY.md   # shown on the dashboard's Data Dictionary page
+
+spark:
+  driver_memory: 4g
+  shuffle_partitions: 8
+
+cleaning:
+  # Ship MMSIs: 9 digits starting with 2-7 (others are base stations, AtoN, handhelds, SAR)
+  mmsi_min: 200000000
+  mmsi_max: 799999999
+  max_implied_knots: 50          # draft: max seen in the 2-day profile is 46.5 kn (fast ferries)
+
+# Signal gap (draft, from 2 NOAA days; recalibrate after `make history`). A Class A vessel (it reports a
+# status) that was reporting regularly goes silent longer than its threshold:
+#   threshold = max(minimum for its state, interval_multiplier x median of its last `median_intervals` intervals)
+signal_gap:
+  moving_knots: 1.0              # speed at or above this is "moving"; below it, or no speed, is "stopped"
+  min_moving_seconds: 600
+  min_stopped_seconds: 1800      # stopped includes anchored and moored vessels
+  interval_multiplier: 8         # 99.9% of normal NOAA intervals are under 7x the vessel's recent median
+  median_intervals: 10
+  regular_reports: 5             # reports needed in the window before the last report
+  regular_window_seconds: 900
+  edge_km: 2.0                   # skip vessels last seen this close to the harbor box edge (likely left)
+  outage_fraction: 0.25          # feed outage: a minute with fewer reports than this share of the day's median; no gap spans one
+  spot_cell_deg: 0.002           # shutdown spots: grid cell size in degrees (about 220 m north-south, 170 m east-west)
+  spot_min_vessels: 2            # a cell is a shutdown spot when this many vessels went silent there
+  spot_min_silence_seconds: 3600 #   for at least this long
+  spot_max_move_km: 0.2          #   and reappeared within this distance
 
 noaa:
-  base_url: https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2024/
+  # Daily zipped CSVs; 2023 and 2024 verified (2025 has no daily point files, see docs/SOURCES.md)
+  file_url: https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{year}/AIS_{year}_{month:02d}_{day:02d}.zip
+
+# Random sample of NOAA history for `make history`. Days are drawn in blocks of consecutive days so that
+# counts around midnight and the "same hour last week" baseline have the days they need.
+history:
+  ranges:                        # days that exist in the archive (checked 2026-11-06, see docs/SOURCES.md)
+    - {start: 2023-01-01, end: 2023-12-31}
+    - {start: 2024-07-01, end: 2024-12-31}   # 2024 before July 1 returns 404
+  blocks: 4                      # random blocks; raising this keeps the blocks already drawn
+  block_days: 14                 # 7 days of lag history plus 7 days with a "same hour last week" value
+  seed: 627                      # fixed so the sample is reproducible
 
 kafka:
   bootstrap_servers: localhost:9092
@@ -22,15 +68,60 @@ kafka:
   spark_package: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.9
 
 stream:
-  source: kafka                  # kafka | files (fallback until Kafka is proven, checkpoint Oct 30)
+  trigger_seconds: 60            # micro-batch interval; each batch writes one Parquet file per date
+  history_trigger_seconds: 300   # live history sink: fewer, larger files; make compact merges them per day
+  history_max_age_days: 8        # live history keeps only reports this recent (Kafka keeps 7 days), so replayed NOAA data never lands there
+  compact_minutes: 60            # live history: how often make stream merges incoming files into one file per day
+  serving_days: 2                # compaction deletes serving positions older than this many days (today included)
+
+dashboard:
+  recent_minutes: 15             # vessels shown on the map: last report within this window
+  refresh_seconds: 30
+  timezone: America/New_York     # display only; stored timestamps stay UTC
+  history_step_minutes: 5        # history page: time slider step, and how far Play advances per tick
+  play_seconds: 1                # history page: seconds between Play ticks
 
 live:
   url: wss://stream.aisstream.io/v0/stream
   api_key_env: AISSTREAM_API_KEY
 
-# Draft: New York Harbor and approaches, to calibrate from the data profile
+# New York Harbor and approaches. Checked Nov 6 on 58 days: ships enter and leave through the offshore lanes at
+# the south-east corner, 8-15 km before the sea entrance gate, so gate counts are complete; reception does not
+# drop near the edges (moving Class A: median 70 s between reports within 2 km of an edge, 67 s inside).
 harbor_bbox:
   lat_min: 40.40
   lat_max: 40.95
   lon_min: -74.30
   lon_max: -73.70
+
+# AIS ship type codes (docs/SOURCES.md) grouped for counting; [min, max] ranges, anything else is "other".
+vessel_groups:
+  cargo: [[70, 79]]
+  tanker: [[80, 89]]
+  passenger: [[60, 69]]
+  tug_tow: [[31, 32], [52, 52]]
+  pleasure_sail: [[36, 37]]
+
+# Gates: lines across the harbor's entrances; a vessel crossing one is counted in or out. `line` is two
+# [lon, lat] points, `inside` any [lon, lat] point on the harbor side (crossing toward it is "in").
+# Chosen Nov 6 from 58 NOAA days: the sea entrance's cargo crossings balance (474 in, 474 out), so the line seals it.
+gates:
+  max_gap_minutes: 30            # consecutive reports further apart than this are not joined (unknown path)
+  target: {gate: sea_entrance, direction: in, groups: [cargo, tanker]}   # the forecast target (week 4)
+  lines:
+    - name: sea_entrance
+      label: Sea entrance (Sandy Hook to Rockaway Point)
+      line: [[-74.011, 40.471], [-73.940, 40.542]]
+      inside: [-74.03, 40.53]
+    - name: narrows
+      label: The Narrows (Verrazzano Bridge)
+      line: [[-74.056, 40.604], [-74.033, 40.611]]
+      inside: [-74.045, 40.63]
+    - name: east_river
+      label: East River (Throgs Neck)
+      line: [[-73.793, 40.8065], [-73.779, 40.7925]]
+      inside: [-73.80, 40.79]
+    - name: hudson
+      label: Hudson River (George Washington Bridge)
+      line: [[-73.962, 40.8536], [-73.9475, 40.8499]]
+      inside: [-73.955, 40.845]
