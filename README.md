@@ -73,7 +73,9 @@ On the Live page, **Replay** shows the latest 15 minutes before the newest repla
 
 ## Public demo link
 
-With the live dashboard running, `make tunnel` (needs `brew install cloudflared`) opens a [Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) to `localhost:8501` and prints a public `https://<random>.trycloudflare.com` URL. No Cloudflare account is needed.
+The live dashboard is hosted at https://vessel-watch.northcentralus.cloudapp.azure.com on one Azure VM that runs Kafka, the live producer, the streaming job, and the dashboard. Setup and upkeep are in [docs/DEPLOY.md](docs/DEPLOY.md).
+
+For a temporary link from the laptop instead: with the live dashboard running, `make tunnel` (needs `brew install cloudflared`) opens a [Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) to `localhost:8501` and prints a public `https://<random>.trycloudflare.com` URL. No Cloudflare account is needed.
 
 - The link works only while the laptop is awake and running all four commands above.
 - The URL changes every time the tunnel restarts, so share the new one each time.
