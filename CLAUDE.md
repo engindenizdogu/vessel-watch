@@ -5,11 +5,12 @@
 **Plan:** See `docs/PROJECT_PLAN.md` for scope, definitions, architecture, schedule, and checkpoints. Treat it as the source of truth; ask before changing scope.
 
 ## Stack
-- Python 3.11, Apache Spark 3.5.x (PySpark, local mode), Java 17
-- Apache Kafka (single broker, KRaft, Docker Compose); topic `ais.raw` keyed by MMSI, 3 partitions; optional `ais.alerts`
-- Parquet (partitioned by date), DuckDB (read-only serving queries over Parquet), rounded lat/lon grid and Shapely (geospatial)
-- scikit-learn or LightGBM (forecast), FastAPI (API), Streamlit with pydeck (dashboard)
-- pytest, Makefile, `uv` or `venv`
+- Python 3.11, Apache Spark 3.5.9 (PySpark, local mode), Java 17
+- Apache Kafka 4.3 (single broker, KRaft, Docker Compose); topic `ais.raw` keyed by MMSI, 3 partitions; optional `ais.alerts`; producers use `confluent-kafka`, the live feed is AISStream over `websockets`
+- Parquet (partitioned by date), DuckDB (read-only serving queries over Parquet), rounded lat/lon grid (geospatial)
+- pandas (forecast target, lags, baselines), scikit-learn or LightGBM (forecast model, week 5), Streamlit with pydeck and Altair (dashboard), FastAPI (API, planned)
+- pytest, Makefile, `uv`
+- Hosting: one Azure VM (Standard_B2s, Azure for Students credit) runs the live side for the public demo; batch jobs and training stay on the laptop
 
 Pin dependency versions. Spark, Java, Python, and the Kafka connector (`spark-sql-kafka-0-10_2.12:<spark version>`) must match.
 
