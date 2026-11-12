@@ -1,12 +1,14 @@
 """Batch job: find gate crossings in the clean NOAA history (data/clean), write them (data/crossings,
-Parquet by date) and crossings per hour, gate, direction, and vessel group (the forecast target table)."""
+Parquet by date) and crossings per hour, gate, direction, and vessel group (the forecast target table), with
+each hour's feed-outage minutes so the forecast can treat a broken hour as missing rather than quiet."""
 
 import pandas as pd
 from pyspark.sql import functions as F
 
+from models.gaps import feed_down_minutes
 from pipeline.config import load_config
 from pipeline.gates import CROSSING_SCHEMA, find_crossings, hourly_counts
-from pipeline.spark import get_spark
+from pipeline.spark import get_spark, reports_per_minute
 
 INPUT_COLUMNS = ["ts", "mmsi", "name", "vessel_type", "lat", "lon"]
 
@@ -33,6 +35,11 @@ def main() -> None:
     events = crossings.select("gate", "direction", "vessel_type", F.unix_timestamp("ts").alias("epoch")).toPandas()
     events["ts"] = pd.to_datetime(events["epoch"], unit="s")
     hourly = hourly_counts(events, days, [line["name"] for line in g["lines"]], cfg["vessel_groups"])
+    down = feed_down_minutes(reports_per_minute(reports), days, cfg["signal_gap"]["outage_fraction"])
+    outage = pd.Series(1, index=down).groupby(down.floor("h")).sum()
+    hourly["outage_minutes"] = hourly["hour"].map(outage).fillna(0).astype(int)
+    print(f"{(outage > 0).sum()} hours have feed-outage minutes, {(outage >= cfg['forecast']['max_outage_minutes']).sum()} "
+          f"of them {cfg['forecast']['max_outage_minutes']} or more (missing in the forecast)")
     hourly.to_parquet(cfg["paths"]["crossings_hourly"], index=False)
 
     per_day = hourly.groupby(["gate", "group", "direction"])["crossings"].sum().unstack() / len(days)

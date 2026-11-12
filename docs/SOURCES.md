@@ -33,7 +33,16 @@ Vessel type codes: "AIS Vessel Type and Group Codes used by the Marine Cadastre 
 
 ## Live AIS: AISStream.io
 
-Checked 2026-10-22. The website blocks scripted access, so the terms, coverage, and rate limits below are **not yet verified**; read them in a browser.
+Checked 2026-10-22. The website blocks scripted access (HTTP 403, again on 2026-11-11), so the site itself was read in a browser.
+
+**Terms and limits (checked 2026-11-11).** Deniz read the privacy policy in a browser and found nothing that blocks our use: https://aisstream.io/privacypolicy. AISStream publishes no terms of service or data licence: users report that `/terms` returns 404 and that the repositories carry no licence for the data, and many requests for written permission (commercial use, public display, storage) have no maintainer reply. What the maintainers have said, in their issue tracker (https://github.com/aisstream/issues):
+- "We have a limit on updates a second" (2026-09-14): https://github.com/aisstream/issues/issues/291. The number is not published.
+- Concurrent connections are capped; "the new 4th connection would be rejected" with HTTP 429, existing connections keep priority (2026-09-03): https://github.com/aisstream/issues/issues/292. One user measured 2, unconfirmed: https://github.com/aisstream/issues/issues/300. We use 1 (`make live`); `make live-probe` alongside it makes 2.
+- The service filters no vessels, but individual receiving stations may downsample and drop small vessels (2023-09-04): https://github.com/aisstream/issues/issues/29.
+- Near bandwidth capacity, and an outage on 2026-08-22 caused by load (circuit-breaker bug): https://github.com/aisstream/issues/issues/291, https://github.com/aisstream/issues/issues/273.
+- Unanswered terms questions: https://github.com/aisstream/issues/issues/290 (storage and redistribution), https://github.com/aisstream/issues/issues/226 (commercial app).
+
+Our use: a non-commercial course project, one server-side connection with a private key, attribution and a link on the Live page, a temporary public demo link, live history stored locally and never redistributed or committed.
 
 | What | Link | Notes |
 | :-- | :-- | :-- |
@@ -52,7 +61,7 @@ First probe (`make live-probe`, 60 s, 2026-10-23 02:55 UTC, harbor box):
 - Message types seen: `PositionReport` (Class A), `StandardClassBPositionReport`, `ShipStaticData` (has `Type`, the vessel type), `StaticDataReport` (Class B name), and one `SubscriptionConfirmation` first.
 - Every message has `MetaData` with `MMSI`, `ShipName`, `latitude`, `longitude`, `time_utc`. Speed, course, heading, and status are inside `Message.<type>` as `Sog`, `Cog`, `TrueHeading`, `NavigationalStatus`.
 - Vessel type is not in position reports; it comes only from `ShipStaticData`.
-- About one position report per vessel per minute. Not yet known whether that is feed throttling or receiver coverage; needs a longer probe.
+- About one position report per vessel per minute. Not yet known whether that is feed throttling or receiver coverage; needs a longer probe. (Nov 6: median 180 s for Class A. Nov 11: the maintainers confirm both a per-second update limit and station downsampling exist, see above; which one sets our rate is still open.) Test 2026-11-12 03:50-04:02 UTC: two connections at once for 10 minutes, one on the whole harbor box and one filtered (`FiltersShipMMSI`) to the 6 Class A vessels reporting most; the filter worked, and both received exactly the same 17 reports from those vessels, none extra. So our subscription is not being throttled; the sparse rate comes from upstream (receiving stations or AISStream's own processing before the fan-out). Caveat: it was night and the feed carried only about 0.4 reports a second, so a per-second limit could still bind at busy daytime hours; a daytime rerun would settle that.
 
 NOAA 2024-07-01, same box and minute: 165 rows from 165 vessels, exactly one per vessel. The NOAA archive appears to be downsampled to one report per vessel per minute.
 

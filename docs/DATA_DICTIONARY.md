@@ -1,6 +1,6 @@
 # Data Dictionary
 
-Both sources are cleaned into one shared schema (Table 1), which is what the dashboard shows. Tables 2 and 3 list the raw fields it is built from, Table 4 describes the signal gaps found in the historical data, Table 5 the shutdown spots learned from them, and Tables 6 and 7 the vessels crossing the harbor's entrance gates.
+Both sources are cleaned into one shared schema (Table 1), which is what the dashboard shows. Tables 2 and 3 list the raw fields it is built from, Table 4 describes the signal gaps found in the historical data, Table 5 the shutdown spots learned from them, Tables 6 and 7 the vessels crossing the harbor's entrance gates, and Tables 8 and 9 the ship lanes and the off-route reports flagged against them.
 
 ## Sources
 
@@ -9,7 +9,7 @@ Both sources are cleaned into one shared schema (Table 1), which is what the das
 
 ## Table 1. Cleaned position reports (shown on the dashboard)
 
-One row per position report inside the harbor box (latitude 40.40 to 40.95, longitude -74.30 to -73.70). Historical days are stored by date in `data/clean/`. Live reports go to `data/serving/positions/` for the dashboard (last 2 days) and to `data/live/history/` (one file per day, compacted every hour by the stream job). Historical data also has duplicate reports and isolated position spikes (implied speed over 50 knots to both neighbouring reports) removed; the live stream skips those two steps because they need each vessel's earlier reports, and the hourly compaction applies them to live history.
+One row per position report inside the harbor box (latitude 40.40 to 40.95, longitude -74.30 to -73.70). Historical days are stored by date in `data/clean/`. Live reports go to `data/serving/positions/` for the dashboard (last 2 days) and to `data/live/history/` (one file per day, compacted every hour by the stream job). Replayed historical days go through the same stream into `data/serving/replay/positions/` (cleared at the start of each replay run). Historical data also has duplicate reports and isolated position spikes (implied speed over 50 knots to both neighbouring reports) removed; the live stream skips those two steps because they need each vessel's earlier reports, and the hourly compaction applies them to live history.
 
 | Column        | Type      | Description                                                                                                                                                                  | From NOAA (Table 2) | From AISStream (Table 3)  |
 | :------------ | :-------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------ | :------------------------ |
@@ -94,6 +94,8 @@ One row per gap: a Class A vessel that was reporting regularly went silent longe
 | `known_spot`  | boolean   | True if the gap started in a shutdown spot (Table 5), where going silent is routine.                              |
 | `date`        | date      | UTC date of `last_ts`; the Parquet files are partitioned by it.                                                   |
 
+The streaming job finds the same gaps as they happen and writes them as events to `data/serving/gap_events/` (replay: `data/serving/replay/gap_events/`), with the columns above except `known_spot`. A vessel that stays silent gets a row with an empty `resumed_ts` when its alert time passes, and a second row with `resumed_ts` filled when it reports again; the latest row per `mmsi` and `last_ts` is current. The feed-outage rule and the shutdown-spot label are applied when the events are read, from the reports per minute the stream writes to `minute_counts/` next to them (`minute`, the minute's start in UTC; `reports`; minutes without reports are absent).
+
 ## Table 5. Shutdown spots (`make gaps`, stored in `data/models/shutdown_spots.parquet`)
 
 One row per grid cell (0.002° on a side, about 220 m north-south by 170 m east-west) where at least 2 vessels had a signal gap of an hour or more that ended within 200 m of where it started: berths and docks where vessels routinely switch AIS off. Learned from the gaps in Table 4 and drawn as gray rings on the dashboard maps.
@@ -128,3 +130,18 @@ The forecast target table: one row per UTC hour, gate, direction, and vessel gro
 | `direction` | text      | `in` or `out`.                                                                                                    |
 | `group`     | text      | Vessel group from the AIS type (`vessel_groups` in `config.yaml`): `cargo`, `tanker`, `passenger`, `tug_tow`, `pleasure_sail`, or `other` (any other code, or none). |
 | `crossings` | integer   | Crossings in that hour.                                                                                           |
+| `outage_minutes` | integer | Minutes in that hour when the whole feed was down (under 25% of the day's median reports per minute; the signal-gap outage rule). The forecast treats an hour with 10 or more as missing. |
+
+## Table 8. Ship lanes (`make offroute`, stored in `data/models/ship_lanes.parquet`)
+
+One row per grid cell (0.005° on a side, about 560 m north-south by 420 m east-west) where a cargo ship or tanker moved at 2 knots or more during the training days (before 2024-08-19), in that cell or one of its 8 neighbours. Cells not in the table had none.
+
+| Column  | Type    | Description                                                                                       |
+| :------ | :------ | :------------------------------------------------------------------------------------------------ |
+| `cy`, `cx` | integer | The cell: latitude and longitude divided by 0.005, rounded down.                               |
+| `ships` | integer | The most distinct cargo ships and tankers under way in the cell or any of its 8 neighbours.       |
+
+## Table 9. Off-route reports (`make offroute`, stored in `data/offroute/`)
+
+One row per position report of a cargo ship or tanker under way (2 knots or more) in a cell with no ships in Table 8: the columns of Table 1 plus `lane_ships` (0). The batch job flags the test days (2024-08-19 on); the streaming job writes the same rows for the live feed to `data/serving/offroute/` (replay: `data/serving/replay/offroute/`). Flagged reports of one ship at most 30 minutes apart are one alert.
+

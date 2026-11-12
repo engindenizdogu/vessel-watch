@@ -6,13 +6,16 @@ paths:
   clean: data/clean
   live_sample: data/live_sample  # raw messages saved by the live probe
   checkpoints: data/checkpoints
-  serving: data/serving
+  serving: data/serving            # the live run's outputs: positions, gap_events, minute_counts
   positions: data/serving/positions  # position reports written by the streaming job
+  replay_serving: data/serving/replay  # a replay run's outputs, laid out like data/serving; cleared at each start
   live_incoming: data/live/incoming  # live reports from the streaming history sink, small files, until compacted
   live_history: data/live/history    # live reports by date, one file per day, cleaned like data/clean (make compact)
   gaps: data/gaps                # signal gaps found in data/clean by the batch gap job
   models: data/models
   shutdown_spots: data/models/shutdown_spots.parquet  # places where AIS is routinely switched off, learned by the gap job
+  ship_lanes: data/models/ship_lanes.parquet  # cells where cargo ships and tankers move, learned by the off-route job
+  offroute: data/offroute        # off-route reports on the test days (Parquet by date)
   crossings: data/crossings      # one row per gate crossing (Parquet by date)
   crossings_hourly: data/crossings_hourly.parquet  # crossings per hour, gate, direction, and vessel group, zeros included
   data_dictionary: docs/DATA_DICTIONARY.md   # shown on the dashboard's Data Dictionary page
@@ -68,9 +71,11 @@ kafka:
   spark_package: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.9
 
 stream:
-  trigger_seconds: 60            # micro-batch interval; each batch writes one Parquet file per date
+  driver_memory: 1536m           # the stream job's heap, below spark.driver_memory so the live stack fits a 4 GB server (measured: about 0.5 GB in use)
+  trigger_seconds: 60           # micro-batch interval; each batch writes one Parquet file per date
+  watermark_seconds: 120         # gap detector and minute counts: reports later than this behind the newest are dropped
   history_trigger_seconds: 300   # live history sink: fewer, larger files; make compact merges them per day
-  history_max_age_days: 8        # live history keeps only reports this recent (Kafka keeps 7 days), so replayed NOAA data never lands there
+  live_max_age_days: 8           # a live run keeps only reports this recent (Kafka keeps 7 days), a replay run only older ones
   compact_minutes: 60            # live history: how often make stream merges incoming files into one file per day
   serving_days: 2                # compaction deletes serving positions older than this many days (today included)
 
@@ -80,6 +85,9 @@ dashboard:
   timezone: America/New_York     # display only; stored timestamps stay UTC
   history_step_minutes: 5        # history page: time slider step, and how far Play advances per tick
   play_seconds: 1                # history page: seconds between Play ticks
+
+replay:
+  speed: 10                      # event time runs this many times faster than wall time (one day in 2.4 h); 0 = as fast as possible
 
 live:
   url: wss://stream.aisstream.io/v0/stream
@@ -101,6 +109,29 @@ vessel_groups:
   passenger: [[60, 69]]
   tug_tow: [[31, 32], [52, 52]]
   pleasure_sail: [[36, 37]]
+
+# Time-based split for everything learned from the history (forecast, off-route lanes): learn from the days
+# before test_start, evaluate on it and after (the last 14-day block, plus 2024-12-15). Never shuffled.
+split:
+  test_start: 2024-08-19
+
+# Arrival forecast (week 4 baseline, week 5 model). Target: `gates.target`, from data/crossings_hourly.parquet.
+forecast:
+  max_outage_minutes: 10         # an hour with this many feed-outage minutes or more is missing, not a low count (25 of 1,392 hours)
+  bin_hours: [1, 3]              # bin sizes compared against the baseline (UTC, aligned to midnight)
+  wider_groups:                  # vessel group sets compared with the target's own groups
+    commercial: [cargo, tanker, passenger, tug_tow]
+    all: [cargo, tanker, passenger, tug_tow, pleasure_sail, other]
+
+# Off-route: a cargo ship or tanker under way where no such ship moved in the training days. Chosen Nov 11 on
+# the test days (74,032 checked reports): 0.21% flagged, 13 ship-days in 15 days; 0.002 deg cells flag 2-8 times
+# as many, 0.01 deg cells would miss a track shifted by about 1 km.
+offroute:
+  groups: [cargo, tanker]        # vessel groups checked (pleasure boats, tugs, and ferries go anywhere or have own routes)
+  min_knots: 2.0                 # only reports under way; moored and anchored ships are not off-route
+  cell_deg: 0.005                # grid cell (about 560 m north-south, 420 m east-west), checked with its 8 neighbours
+  min_ships: 1                   # off-route: fewer than this many training ships moved in the cell or a neighbour
+  episode_gap_minutes: 30        # flagged reports of one ship this close together are one alert
 
 # Gates: lines across the harbor's entrances; a vessel crossing one is counted in or out. `line` is two
 # [lon, lat] points, `inside` any [lon, lat] point on the harbor side (crossing toward it is "in").

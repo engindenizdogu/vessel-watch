@@ -7,6 +7,7 @@ services:
     ports:
       - "9092:9092"
     environment:
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"   # the image's default heap is 1 GB; the harbor feed needs far less
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
@@ -19,6 +20,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data   # the image's default is /tmp, which is lost when the container is removed
     volumes:
       - kafka-data:/var/lib/kafka/data
 

@@ -3,7 +3,8 @@ from datetime import date, datetime, time
 import pandas as pd
 
 from app.queries import (
-    available_days, gate_rates, latest_positions, load_shutdown_spots, local_to_utc, parquet_glob, vessels_per_hour,
+    available_days, gate_rates, latest_positions, latest_report_time, load_shutdown_spots, local_to_utc, parquet_glob,
+    vessels_per_hour,
 )
 
 TZ = "America/New_York"
@@ -86,3 +87,10 @@ def test_gate_rates_average_per_day(tmp_path):
                   "crossings": [2, 1, 4, 3]}).to_parquet(path)
     r = gate_rates(path, ["cargo"]).iloc[0]
     assert (r.ships, r["all"]) == (3.0, 5.0)  # (2 + 4) / 2 days, (2 + 1 + 4 + 3) / 2 days
+
+
+def test_latest_report_time_reads_the_newest_partition(tmp_path):
+    assert latest_report_time(tmp_path / "missing") is None
+    write_day(tmp_path, "2023-03-01", [("2023-03-01 23:00:00", 1)])
+    write_day(tmp_path, "2023-03-02", [("2023-03-02 04:10:00", 1), ("2023-03-02 04:12:30", 2)])
+    assert latest_report_time(tmp_path) == datetime(2023, 3, 2, 4, 12, 30)

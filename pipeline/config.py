@@ -15,3 +15,8 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
         cfg = yaml.safe_load(f)
     cfg["paths"] = {name: ROOT / p for name, p in cfg["paths"].items()}
     return cfg
+
+
+def serving_dir(cfg: dict[str, Any], run: str) -> Path:
+    """Folder for a stream run's outputs (positions, gap_events, minute_counts): live or replay."""
+    return cfg["paths"]["serving"] if run == "live" else cfg["paths"]["replay_serving"]

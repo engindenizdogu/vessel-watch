@@ -1,16 +1,14 @@
 """Batch job: find signal gaps in the clean NOAA history (data/clean), learn shutdown spots from them, and
 write both (data/gaps, and the spots file under data/models)."""
 
-import pandas as pd
 from pyspark.sql import functions as F
 
 from models.gaps import (
-    GAP_SCHEMA, LABELED_GAP_SCHEMA, coverage_ends, feed_down_minutes, find_gaps, label_known_spots, shutdown_spots,
+    GAP_SCHEMA, LABELED_GAP_SCHEMA, REPORT_COLUMNS, coverage_ends, feed_down_minutes, find_gaps, label_known_spots,
+    shutdown_spots,
 )
 from pipeline.config import load_config
-from pipeline.spark import get_spark
-
-INPUT_COLUMNS = ["ts", "mmsi", "name", "lat", "lon", "sog", "vessel_type", "status"]
+from pipeline.spark import get_spark, reports_per_minute
 
 
 def main() -> None:
@@ -22,17 +20,14 @@ def main() -> None:
     ends = coverage_ends(days)
     print(f"read {reports.count():,} reports from {len(days)} days in {len(set(ends.values()))} run(s) of consecutive days")
 
-    # Epoch minutes, not timestamps, cross to pandas: no time zone conversion on the way.
-    per_minute = reports.groupBy(F.floor(F.unix_timestamp("ts") / 60).alias("minute")).count().toPandas()
-    counts = pd.Series(per_minute["count"].to_numpy(), index=pd.to_datetime(per_minute["minute"] * 60, unit="s"))
-    down = feed_down_minutes(counts, days, g["outage_fraction"])
+    down = feed_down_minutes(reports_per_minute(reports), days, g["outage_fraction"])
     print(
         f"feed outage in {len(down):,} of {len(days) * 1440:,} minutes (under {g['outage_fraction']:.0%} of the "
         "day's median reports per minute); no gap is raised across them"
     )
 
     gaps = (
-        reports.select(*INPUT_COLUMNS)
+        reports.select(*REPORT_COLUMNS)
         .groupBy("mmsi")
         .applyInPandas(lambda vessel: find_gaps(vessel, cfg, ends, down), schema=GAP_SCHEMA)
         .cache()

@@ -28,6 +28,8 @@ make history    # sample NOAA days, download, clean into data/clean/ (Parquet by
 make profile    # summarize data/clean/ into docs/DATA_PROFILE.md
 make gaps       # find signal gaps in data/clean/, learn shutdown spots, write both (data/gaps/, data/models/)
 make gates      # vessels crossing the harbor entrances, in and out, and crossings per hour (the forecast target)
+make baseline   # score the forecast baselines on the test block (needs make gates)
+make offroute   # learn ship lanes from the training days, flag off-route ships on the test days
 ```
 
 `make history` draws random blocks of consecutive days; the `history` section of `config.yaml` sets the date ranges, the number of blocks, the days per block, and the seed. It downloads, cleans, and deletes one raw day at a time (NOAA daily CSVs are about 1 GB unzipped), so only about 1.4 GB of raw data is on disk at once. It prints the row count after each cleaning step. Days already in `data/clean/` are skipped, so it can be stopped with Ctrl+C and rerun. The default sample (4 blocks of 14 days) takes about 35-45 minutes.
@@ -46,13 +48,26 @@ Start the broker once, then run the other three in their own terminals and leave
 ```
 make kafka-up      # start the Kafka broker (Docker) and create the topics; returns when ready
 make live          # live producer: AISStream over the harbor box to the ais.raw topic
-make stream        # Spark Structured Streaming: ais.raw to data/serving/positions/, and live history to data/live/
+make stream        # Spark Structured Streaming: ais.raw to data/serving/ (positions, signal gaps, reports per minute), and live history to data/live/
 make app           # Streamlit dashboard at http://localhost:8501
 ```
 
 The Live page shows each vessel's latest position from the last 15 minutes and refreshes every 30 seconds. The Data Dictionary page shows [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md). The History page shows the harbor at a chosen time on any day in `data/clean/`, with a Play button and a vessels-per-hour chart; it needs only `make app`, not Kafka. Times are New York time. NOAA files are UTC days, so the last 4-5 hours of a day are empty unless the next day is also downloaded. The first `make stream` downloads the Spark Kafka connector, so it takes a minute to start. Stop each one with Ctrl+C, and the broker with `make kafka-down`.
 
 Live history: `make stream` also stores every live report and, every hour, merges them into one file per day in `data/live/history/`, cleaned like the NOAA history; it also deletes serving data older than 2 days. `make compact` does the same once, for when the stream is not running.
+
+## Replay
+
+Replay sends days from `data/clean/` through the same Kafka topic and Spark job as the live feed, with their original timestamps, at an accelerated speed. It is the demo fallback when the live feed is quiet, and the test bed for the streaming detectors. Run one source at a time:
+
+```
+make kafka-up
+make stream RUN=replay                         # wait for "Ready"; each replay run clears data/serving/replay/
+make replay START=2023-02-24 [END=...] [SPEED=10]   # SPEED: times faster than real time (default 10); 0 = as fast as possible
+make app                                       # Live page, Feed: Replay
+```
+
+On the Live page, **Replay** shows the latest 15 minutes before the newest replayed report. A replay run reads only messages produced after it starts, so start it before `make replay`. The range must lie inside one block of consecutive clean days (`make replay` lists them otherwise), since pacing follows event time and would wait out the months between blocks. The stream keeps live and replayed reports apart by age (live keeps the last 8 days, replay anything older), so a later `make stream` on the live feed skips replayed messages still in the topic. Replaying 2023-02-24 at `SPEED=0` (237,808 reports, sent in about 3 s) gave serving rows identical to `data/clean/`. For the gap detector use `SPEED=3600` or slower: at full speed the three Kafka partitions can drift more than the 2-minute watermark apart in event time, and late reports are dropped (the stream prints how many). Replaying 2023-02-24 to 2023-03-09 at 3600x (3.0 M reports, 6 minutes) reproduced 1,405 of the 1,407 batch gaps exactly; the other 2 would have fired after the data ended.
 
 `make live-probe [DURATION=120]` listens to the live feed without Kafka and saves the raw messages to `data/live_sample/`, which is useful for checking the feed and the API key.
 

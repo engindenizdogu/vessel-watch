@@ -2,7 +2,7 @@
 KAFKA_TOPICS = docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092
 APP_PORT = 8501
 
-.PHONY: env kafka-up kafka-down test live-probe live stream app tunnel clean-data profile download history gaps gates compact
+.PHONY: env kafka-up kafka-down test live-probe live replay stream app tunnel clean-data profile download history gaps gates baseline offroute compact
 
 env:
 	uv sync
@@ -25,6 +25,10 @@ live-probe:
 
 live:
 	uv run python -m ingest.live_client
+
+# Replay clean NOAA days to ais.raw; start `make stream RUN=replay` first.
+replay:
+	uv run python -m ingest.replay --start $(START) $(if $(END),--end $(END)) $(if $(SPEED),--speed $(SPEED))
 
 stream:
 	uv run python -m pipeline.stream_job --run $(or $(RUN),live)
@@ -59,3 +63,11 @@ gaps:
 
 gates:
 	uv run python -m pipeline.gate_job
+
+# Score the forecast baselines on the test block (needs make gates).
+baseline:
+	uv run python -m pipeline.baseline_job
+
+# Learn ship lanes from the training days and flag off-route reports on the test days.
+offroute:
+	uv run python -m pipeline.offroute_job

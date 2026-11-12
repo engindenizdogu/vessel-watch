@@ -50,6 +50,18 @@ def latest_positions(glob: str, minutes: int, as_of: datetime) -> pd.DataFrame:
     return df.reindex(columns=POSITION_COLUMNS)  # files written before a column was added lack it
 
 
+def latest_report_time(folder: Path) -> datetime | None:
+    """Time (naive UTC) of the newest report in a `date=`-partitioned folder; None if it has none yet."""
+    days = available_days(folder)
+    if not days:
+        return None
+    try:
+        ts = _query(f"select max(ts) as ts from read_parquet('{folder / f'date={days[-1]}'}/*.parquet')", [])["ts"].iloc[0]
+    except duckdb.IOException:  # partition folder without files yet
+        return None
+    return None if pd.isna(ts) else ts.to_pydatetime()
+
+
 def load_shutdown_spots(path: Path) -> pd.DataFrame:
     """Shutdown spots written by the gap job (lat, lon, vessels, silences, median_silence_h); empty if none yet."""
     try:

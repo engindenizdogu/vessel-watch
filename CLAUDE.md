@@ -25,19 +25,21 @@ Available now:
 - `make test`: run pytest
 - `make live-probe [DURATION=120]`: listen to the live feed over the harbor box, print sample messages and a summary, save raw JSON lines to `data/live_sample/`
 - `make live`: run the live producer (AISStream over the harbor box to `ais.raw`, keyed by MMSI) until Ctrl+C; needs `make kafka-up` and `AISSTREAM_API_KEY` in `.env`
-- `make stream [RUN=live|replay]`: run the Structured Streaming job (`ais.raw` to `data/serving/positions/`, checkpoint per run); applies the stateless cleaning steps. With `RUN=live` a second query (own checkpoint) also writes live history to `data/live/incoming/`, and every hour (`stream.compact_minutes`) it compacts that into `data/live/history/` (one file per day, today included; duplicate and spike steps applied) and deletes serving days older than `stream.serving_days`
+- `make replay START=YYYY-MM-DD [END=...] [SPEED=10]`: the replay producer; sends `data/clean/` days to `ais.raw` in event-time order with original timestamps, keyed by MMSI, `SPEED` times faster than real time (`replay.speed`; 0 = as fast as possible); the range must be one block of consecutive clean days. Start `make stream RUN=replay` first and wait for its "Ready" line
+- `make stream [RUN=live|replay]`: run the Structured Streaming job; applies the stateless cleaning steps and writes three queries (own checkpoint each) to the run's serving folder (`data/serving/`, or `data/serving/replay/`): `positions/`, `gap_events/` (streaming signal gaps, `models.gaps.track_gaps` with `applyInPandasWithState`; read them through `confirmed_gaps`, which applies the feed-outage guard), and `minute_counts/` (reports per minute for that guard), and `offroute/` (off-route reports, once `make offroute` has written the lanes). Each run keeps only its own reports by age (`stream.live_max_age_days`: live keeps the last 8 days, replay older ones). `RUN=replay` starts fresh every time: it clears `data/serving/replay/` and its checkpoints and reads only messages produced after it starts. With `RUN=live` a second query (own checkpoint) also writes live history to `data/live/incoming/`, and every hour (`stream.compact_minutes`) it compacts that into `data/live/history/` (one file per day, today included; duplicate and spike steps applied) and deletes serving days older than `stream.serving_days`
 - `make compact` (optional): run that compaction once, only when `make stream` is not running
-- `make app`: start the Streamlit dashboard on port 8501: a Live page (latest positions from serving Parquet) a History page (map at a chosen time on a cleaned NOAA day, vessels per hour), both read through DuckDB, and a Data Dictionary page that renders `docs/DATA_DICTIONARY.md`
+- `make app`: start the Streamlit dashboard on port 8501: a Live page (latest positions from serving Parquet; a Feed switch shows the replay output instead) a History page (map at a chosen time on a cleaned NOAA day, vessels per hour), both read through DuckDB, and a Data Dictionary page that renders `docs/DATA_DICTIONARY.md`
 - `make tunnel`: public demo link; a Cloudflare Quick Tunnel to the local dashboard (needs `cloudflared`; random URL per start, works only while the laptop runs the pipeline)
 - `make history`: the main way to get NOAA history. Samples random blocks of consecutive days (config `history`), then downloads, cleans into `data/clean/` (Parquet by date, row counts per step), and deletes each raw day in turn; skips days already cleaned
 - `make download START=YYYY-MM-DD END=YYYY-MM-DD` (optional): download specific NOAA days into `data/raw/` and keep the CSVs (about 1 GB per day unzipped; existing days skipped)
 - `make clean-data` (optional): clean every `data/raw/AIS_*.csv` with Spark into `data/clean/`, e.g. to re-clean kept CSVs after a rule change
 - `make gaps`: find signal gaps in `data/clean/` with Spark (rule in `models/gaps.py`), learn shutdown spots from them (`data/models/shutdown_spots.parquet`, drawn on the dashboard maps), and write the labeled gaps to `data/gaps/` (Parquet by date), printing counts by state
-- `make gates`: find gate crossings in `data/clean/` with Spark (rule in `pipeline/gates.py`), write them to `data/crossings/` (Parquet by date) and crossings per hour, gate, direction, and vessel group, zeros included, to `data/crossings_hourly.parquet` (the forecast target table)
+- `make gates`: find gate crossings in `data/clean/` with Spark (rule in `pipeline/gates.py`), write them to `data/crossings/` (Parquet by date) and crossings per hour, gate, direction, and vessel group, zeros included, to `data/crossings_hourly.parquet` (the forecast target table, with each hour's feed-outage minutes)
+- `make baseline`: score the forecast baselines (same time last week and yesterday, training time-of-day mean, always zero) on the test block (`forecast.test_start`), hourly and in 3-hour bins, for the target's vessel groups and wider ones (`forecast` in `config.yaml`); target and lag code in `pipeline/features.py`, scoring in `models/forecast.py`
+- `make offroute`: learn ship lanes from the training days (`split.test_start`) into `data/models/ship_lanes.parquet` (read by `make stream`, which then writes off-route reports to its serving folder) and flag off-route reports on the test days into `data/offroute/` (Parquet by date), printing the alert rate and the alerts
 - `make profile`: profile `data/clean/` with DuckDB (traffic per hour, report intervals by status, implied speeds) and write `docs/DATA_PROFILE.md`
 
 Planned:
-- `make replay`: publish historical data to `ais.raw` at accelerated speed
 - `make train`: build features and train the forecast model offline
 - `make api`: start FastAPI
 
@@ -61,7 +63,7 @@ Planned:
 - Confirm the live feed's New York Harbor coverage and terms before relying on it.
 
 ## Working Style
-- Follow the weekly plan in `docs/PROJECT_PLAN.md`. Checkpoints: Oct 25 (data usable, with numbers), Oct 30 (Kafka reads into Spark; passed Oct 28), Nov 15 (feature freeze).
+- Follow the weekly plan in `docs/PROJECT_PLAN.md`. Checkpoints: Oct 25 (data usable, with numbers), Oct 30 (Kafka reads into Spark; passed Oct 28), feature freeze in week 5 (Nov 16-22, date to be decided; moved from Nov 15 on Nov 11).
 - If scope has to be cut, cut in this order: off-route alerts, then the live feed (demo from replay), then forecast tuning.
 - Build vertical slices that run end to end, then improve. Prefer simple, explainable rules (signal gap) before learned models.
 - Report forecast results honestly, including when the model does not beat the seasonal-naive baseline.
@@ -79,4 +81,4 @@ Planned:
 ## Definitions (draft, finalized in week 1)
 - **Gate crossing (arrival):** a vessel's consecutive reports, at most 30 min apart, whose track crosses a gate line at a harbor entrance; "in" if it ends on the harbor side. Rule in `pipeline/gates.py`, gates and vessel groups in `config.yaml` (`gates`, `vessel_groups`). Forecast target: inbound cargo ships and tankers per hour at the sea entrance (`gates.target`).
 - **Signal gap:** a Class A vessel that was reporting regularly goes silent longer than max(minimum for its state, 8 x its median recent interval); state is moving (>= 1 knot, 10 min minimum) or stopped (30 min, includes anchored and moored). Skip vessels last seen near the box edge; never alert past the end of the data or across a feed outage (a minute with under 25% of the day's median reports). Gaps starting at a learned shutdown spot (a berth where vessels routinely switch AIS off) are labeled `known_spot`. Rule in `models/gaps.py`, parameters in `config.yaml` (`signal_gap`).
-- **Off-route:** a report in a grid cell with historical traffic density below a threshold, or far from a learned lane.
+- **Off-route:** a cargo ship or tanker under way (2 knots or more) in a grid cell where no such ship moved, in the cell or its 8 neighbours, during the training days (before `split.test_start`); flagged reports of one ship at most 30 min apart are one alert. Rule in `models/offroute.py`, parameters in `config.yaml` (`offroute`).
